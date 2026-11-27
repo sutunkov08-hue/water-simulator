@@ -384,6 +384,7 @@ function makeHuman({ shirt = 0x2e6da4, pants = 0x37404a, skin = 0xe8b98c, hair =
   const armRP = new THREE.Group();
   armRP.position.set(-0.31, 1.45, 0);
   armRP.rotation.z = -0.12;
+  armRP.rotation.x = -0.5;
   const armL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.62, 10), shirtM);
   armL.position.set(0, -0.31, 0);
   armLP.add(armL);
@@ -1463,6 +1464,7 @@ const NET = {
   screen: null, posTimer: 0, hbTimer: null, joinWaitTimer: null
 };
 const remoteHumans = {};
+const remoteTmp = new THREE.Vector3();
 const REMOTE_COLORS = [0xc0392b, 0x8e44ad, 0xd68910, 0x148f77, 0x2e4053, 0xb03a2e, 0x1f618d, 0x7d6608];
 const TOPIC = t => 'watersim/v1/' + t;
 const publicServers = new Map();
@@ -1682,10 +1684,15 @@ function updateRemote(m) {
       human.hand.add(p);
       props[k] = p;
     }
-    r = remoteHumans[m.id] = { human, props, curTool: null, target: new THREE.Vector3(m.x, m.y - 1.7, m.z), yaw: m.yaw + Math.PI, moving: false, movingAmt: 0, walkPhase: 0 };
+    r = remoteHumans[m.id] = { human, props, curTool: null, target: new THREE.Vector3(m.x, m.y - 1.7, m.z), rawPrev: new THREE.Vector3(m.x, m.y - 1.7, m.z), vel: new THREE.Vector3(), lastNet: performance.now(), yaw: m.yaw + Math.PI, moving: false, movingAmt: 0, walkPhase: 0 };
     r.human.group.position.copy(r.target);
     r.human.group.rotation.y = r.yaw;
   }
+  const now = performance.now();
+  const dts = Math.max(0.02, (now - r.lastNet) / 1000);
+  r.vel.set((m.x - r.rawPrev.x) / dts, (m.y - 1.7 - r.rawPrev.y) / dts, (m.z - r.rawPrev.z) / dts);
+  r.rawPrev.set(m.x, m.y - 1.7, m.z);
+  r.lastNet = now;
   r.target.set(m.x, m.y - 1.7, m.z);
   r.yaw = m.yaw + Math.PI;
   r.moving = !!m.mv;
@@ -1925,14 +1932,15 @@ function animate() {
   if (NET.connected && NET.code && !state.inMenu) {
     NET.posTimer -= dt;
     if (NET.posTimer <= 0) {
-      NET.posTimer = 0.05;
+      NET.posTimer = 0.033;
       const mv = (keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD']) ? 1 : 0;
       netPublish(TOPIC('room/' + NET.code), { type: 'pos', id: NET.id, x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), yaw: +player.yaw.toFixed(2), tool: state.tool, mv });
     }
   }
   for (const id of Object.keys(remoteHumans)) {
     const r = remoteHumans[id];
-    r.human.group.position.lerp(r.target, Math.min(1, dt * 14));
+    remoteTmp.copy(r.target).addScaledVector(r.vel, Math.min((performance.now() - r.lastNet) / 1000, 0.3));
+    r.human.group.position.lerp(remoteTmp, Math.min(1, dt * 14));
     let dy = r.yaw - r.human.group.rotation.y;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
@@ -1943,7 +1951,7 @@ function animate() {
     r.human.legLP.rotation.x = sw;
     r.human.legRP.rotation.x = -sw;
     r.human.armLP.rotation.x = -sw * 0.6;
-    r.human.armRP.rotation.x = sw * 0.6;
+    r.human.armRP.rotation.x = -0.5 + sw * 0.6;
     r.human.blinkTimer -= dt;
     if (r.human.blinkTimer <= 0) {
       r.human.blinkT = 0.14;
