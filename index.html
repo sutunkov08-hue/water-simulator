@@ -361,27 +361,43 @@ function makeHuman({ shirt = 0x2e6da4, pants = 0x37404a, skin = 0xe8b98c, hair =
   const pantsM = new THREE.MeshStandardMaterial({ color: pants, roughness: 0.85 });
   const skinM = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.7 });
   const hairM = new THREE.MeshStandardMaterial({ color: hair, roughness: 0.85 });
+  const legLP = new THREE.Group();
+  legLP.position.set(0.12, 0.75, 0);
+  const legRP = new THREE.Group();
+  legRP.position.set(-0.12, 0.75, 0);
   const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.75, 10), pantsM);
-  legL.position.set(0.12, 0.375, 0);
+  legL.position.set(0, -0.375, 0);
   const legR = legL.clone();
-  legR.position.x = -0.12;
+  legRP.add(legR);
+  legLP.add(legL);
   const shoeM = new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: 0.8 });
   const shoeL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.09, 0.26), shoeM);
-  shoeL.position.set(0.12, 0.045, 0.04);
+  shoeL.position.set(0, -0.71, 0.04);
+  legL.add(shoeL);
   const shoeR = shoeL.clone();
-  shoeR.position.x = -0.12;
+  legR.add(shoeR);
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.5, 6, 14), shirtM);
   torso.position.y = 1.12;
+  const armLP = new THREE.Group();
+  armLP.position.set(0.31, 1.45, 0);
+  armLP.rotation.z = 0.12;
+  const armRP = new THREE.Group();
+  armRP.position.set(-0.31, 1.45, 0);
+  armRP.rotation.z = -0.12;
   const armL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.055, 0.62, 10), shirtM);
-  armL.position.set(0.31, 1.15, 0);
-  armL.rotation.z = 0.12;
+  armL.position.set(0, -0.31, 0);
+  armLP.add(armL);
   const armR = armL.clone();
-  armR.position.x = -0.31;
-  armR.rotation.z = -0.12;
+  armRP.add(armR);
   const handL = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), skinM);
-  handL.position.set(0.35, 0.82, 0);
+  handL.position.set(0, -0.66, 0);
+  armLP.add(handL);
   const handR = handL.clone();
-  handR.position.x = -0.35;
+  armRP.add(handR);
+  const hand = new THREE.Group();
+  hand.position.set(0, -0.72, -0.02);
+  hand.rotation.x = -Math.PI / 2;
+  armRP.add(hand);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 22, 18), skinM);
   head.position.y = 1.83;
   const eyeM = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
@@ -412,8 +428,8 @@ function makeHuman({ shirt = 0x2e6da4, pants = 0x37404a, skin = 0xe8b98c, hair =
     head.add(brim, top);
   }
   for (const m of [legL, legR, shoeL, shoeR, torso, armL, armR, handL, handR, head]) m.castShadow = true;
-  g.add(legL, legR, shoeL, shoeR, torso, armL, armR, handL, handR, head);
-  return { group: g, head, eyes, blinkTimer: 1.5 + Math.random() * 4, blinkT: 0 };
+  g.add(legLP, legRP, torso, armLP, armRP, head);
+  return { group: g, head, eyes, blinkTimer: 1.5 + Math.random() * 4, blinkT: 0, legLP, legRP, armLP, armRP, hand };
 }
 
 const shopVendor = makeHuman({ shirt: 0x3f7d3f, pants: 0x2c3440, hair: 0x2a2a2a, hatColor: 0xd8b04a });
@@ -1593,6 +1609,65 @@ function onNetMessage(topic, payload) {
   }
 }
 
+function makeRemoteTool(kind) {
+  const silver = new THREE.MeshStandardMaterial({ color: 0xd9dde2, roughness: 0.28, metalness: 0.7 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0xcfe9f5, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.45, side: THREE.DoubleSide });
+  const blue = new THREE.MeshStandardMaterial({ color: 0x2e86c1, roughness: 0.5, metalness: 0.15, side: THREE.DoubleSide });
+  const plastic = new THREE.MeshStandardMaterial({ color: 0xd35400, roughness: 0.55, metalness: 0.1 });
+  const waterFill = new THREE.MeshPhysicalMaterial({ color: 0x8fd4f2, roughness: 0.05, metalness: 0, transmission: 0.7, thickness: 0.5, ior: 1.33, transparent: true, opacity: 0.92, clearcoat: 1, clearcoatRoughness: 0.06, side: THREE.DoubleSide });
+  const g = new THREE.Group();
+  if (kind === 'spoon') {
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.02, 0.44, 10), silver);
+    handle.rotation.x = Math.PI / 2;
+    handle.position.z = -0.17;
+    const bowlMat = silver.clone();
+    bowlMat.side = THREE.DoubleSide;
+    const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 12, 0, Math.PI * 2, Math.PI * 0.52, Math.PI * 0.48), bowlMat);
+    bowl.position.set(0, 0.02, -0.42);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.074, 0.008, 8, 22), silver);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(0, 0.0153, -0.42);
+    const fill = new THREE.Mesh(new THREE.CircleGeometry(0.066, 22), waterFill);
+    fill.rotation.x = -Math.PI / 2;
+    fill.position.set(0, 0.002, -0.42);
+    g.add(handle, bowl, rim, fill);
+    g.rotation.x = 0.35;
+  } else if (kind === 'cup') {
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.058, 0.17, 16, 1, true), glass);
+    const bottom = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.012, 16), glass);
+    bottom.position.y = -0.08;
+    const fill = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.05, 0.12, 16), waterFill);
+    g.add(body, bottom, fill);
+  } else if (kind === 'basin') {
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.13, 0.13, 20, 1, true), blue);
+    const bottom = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.015, 20), blue);
+    bottom.position.y = -0.062;
+    const fill = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.12, 0.09, 20), waterFill);
+    fill.position.y = -0.01;
+    g.add(body, bottom, fill);
+  } else if (kind === 'canister') {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.4, 0.18), plastic);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.07, 10), new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.5 }));
+    cap.position.set(0.06, 0.235, 0);
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.015, 8, 14, Math.PI), plastic);
+    handle.position.set(-0.05, 0.21, 0);
+    const fill = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.3, 0.115), waterFill);
+    fill.position.y = -0.03;
+    g.add(body, cap, handle, fill);
+  } else if (kind === 'hose') {
+    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.048, 0.24, 10), silver);
+    nozzle.rotation.x = Math.PI / 2.4;
+    nozzle.position.set(0, -0.02, -0.05);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.032, 0.008, 8, 12), silver);
+    ring.position.set(0, -0.02, 0.06);
+    const fill = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.03, 0.17, 8), waterFill);
+    fill.rotation.x = Math.PI / 2.4;
+    fill.position.set(0, -0.02, -0.06);
+    g.add(nozzle, ring, fill);
+  }
+  return g;
+}
+
 function updateRemote(m) {
   if (m.id === NET.id) return;
   let r = remoteHumans[m.id];
@@ -1600,11 +1675,25 @@ function updateRemote(m) {
     const color = REMOTE_COLORS[Object.keys(remoteHumans).length % REMOTE_COLORS.length];
     const human = makeHuman({ shirt: color, pants: 0x2c3440, hair: 0x3a2a18, hatColor: null });
     scene.add(human.group);
-    r = remoteHumans[m.id] = { human, target: new THREE.Vector3(0, 0, 0), yaw: 0 };
+    const props = {};
+    for (const k of ['spoon', 'cup', 'basin', 'canister', 'hose']) {
+      const p = makeRemoteTool(k);
+      p.visible = false;
+      human.hand.add(p);
+      props[k] = p;
+    }
+    r = remoteHumans[m.id] = { human, props, curTool: null, target: new THREE.Vector3(m.x, m.y - 1.7, m.z), yaw: m.yaw + Math.PI, moving: false, movingAmt: 0, walkPhase: 0 };
+    r.human.group.position.copy(r.target);
+    r.human.group.rotation.y = r.yaw;
   }
   r.target.set(m.x, m.y - 1.7, m.z);
   r.yaw = m.yaw + Math.PI;
-  r.human.group.position.set(m.x, m.y - 1.7, m.z);
+  r.moving = !!m.mv;
+  const tool = m.tool || null;
+  if (tool !== r.curTool) {
+    for (const k of Object.keys(r.props)) r.props[k].visible = (k === tool);
+    r.curTool = tool;
+  }
 }
 
 function removeRemote(id) {
@@ -1830,13 +1919,34 @@ function animate() {
   if (NET.connected && NET.code && !state.inMenu) {
     NET.posTimer -= dt;
     if (NET.posTimer <= 0) {
-      NET.posTimer = 0.1;
-      netPublish(TOPIC('room/' + NET.code), { type: 'pos', id: NET.id, x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), yaw: +player.yaw.toFixed(2) });
+      NET.posTimer = 0.05;
+      const mv = (keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD']) ? 1 : 0;
+      netPublish(TOPIC('room/' + NET.code), { type: 'pos', id: NET.id, x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), yaw: +player.yaw.toFixed(2), tool: state.tool, mv });
     }
-    for (const id of Object.keys(remoteHumans)) {
-      const r = remoteHumans[id];
-      r.human.group.position.lerp(r.target, Math.min(1, dt * 9));
-      r.human.group.rotation.y = r.yaw;
+  }
+  for (const id of Object.keys(remoteHumans)) {
+    const r = remoteHumans[id];
+    r.human.group.position.lerp(r.target, Math.min(1, dt * 14));
+    let dy = r.yaw - r.human.group.rotation.y;
+    while (dy > Math.PI) dy -= Math.PI * 2;
+    while (dy < -Math.PI) dy += Math.PI * 2;
+    r.human.group.rotation.y += dy * Math.min(1, dt * 12);
+    r.movingAmt += ((r.moving ? 1 : 0) - r.movingAmt) * Math.min(1, dt * 8);
+    r.walkPhase += dt * 9;
+    const sw = Math.sin(r.walkPhase) * 0.6 * r.movingAmt;
+    r.human.legLP.rotation.x = sw;
+    r.human.legRP.rotation.x = -sw;
+    r.human.armLP.rotation.x = -sw * 0.6;
+    r.human.armRP.rotation.x = sw * 0.6;
+    r.human.blinkTimer -= dt;
+    if (r.human.blinkTimer <= 0) {
+      r.human.blinkT = 0.14;
+      r.human.blinkTimer = 2 + Math.random() * 4;
+    }
+    if (r.human.blinkT > 0) {
+      r.human.blinkT -= dt;
+      const s = r.human.blinkT > 0 ? 0.08 : 1;
+      for (const e of r.human.eyes) e.scale.y = s;
     }
   }
   if (!state.inMenu && !state.won && state.volume <= 0 && state.carried === 0 && water && !water.visible) winGame();
