@@ -1454,7 +1454,7 @@ function npcSay(npc, lines, chance) {
   speech = { npc, until: clock.elapsedTime + 2.8 };
 }
 
-const NET_VERSION = 8;
+const NET_VERSION = 9;
 const NET = {
   id: Math.random().toString(36).slice(2, 9),
   name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
@@ -1547,7 +1547,7 @@ function onNetMessage(topic, payload) {
         if (m.players.some(p => p.id === NET.id)) {
           clearTimeout(NET.joinWaitTimer);
           clearInterval(NET.joinRetry);
-          if (m.started && NET.screen === 'joining') {
+          if (m.started && !NET.started && (NET.screen === 'joining' || NET.screen === 'netLobby')) {
             if (m.v !== NET_VERSION) { netStatus('netStatusJoin', 'У хоста другая версия — обновите страницу (Ctrl+Shift+R)'); break; }
             NET.started = true;
             hideNetScreens();
@@ -1744,7 +1744,7 @@ function leaveNet() {
     netPublish(TOPIC('room/' + NET.code), { type: 'leave', id: NET.id }, 1);
     if (NET.isHost && !NET.private) netPublish(TOPIC('lobby'), { code: NET.code, gone: true });
   }
-  clearInterval(NET.hbTimer); clearTimeout(NET.joinWaitTimer); clearInterval(NET.joinRetry);
+  clearInterval(NET.hbTimer); clearTimeout(NET.joinWaitTimer); clearInterval(NET.joinRetry); clearInterval(NET.startTimer);
   for (const id of Object.keys(remoteHumans)) removeRemote(id);
   publicServers.clear();
   NET.code = null; NET.isHost = false; NET.started = false; NET.players = []; NET.screen = null; NET.roomSub = null;
@@ -1837,8 +1837,14 @@ document.getElementById('modeSel').addEventListener('change', e => { if (NET.isH
 document.getElementById('startSrvBtn').addEventListener('click', () => {
   if (!NET.isHost) return;
   NET.started = true;
-  netPublish(TOPIC('room/' + NET.code), { type: 'start', v: NET_VERSION, mode: NET.mode, vol: state.volume }, 1);
+  const sendStart = () => {
+    netSendState();
+    netPublish(TOPIC('room/' + NET.code), { type: 'start', v: NET_VERSION, mode: NET.mode, vol: state.volume }, 1);
+  };
+  sendStart();
   clearInterval(NET.hbTimer);
+  clearInterval(NET.startTimer);
+  NET.startTimer = setInterval(sendStart, 3000);
   hideNetScreens();
   startGame(NET.mode);
 });
