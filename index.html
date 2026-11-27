@@ -46,6 +46,21 @@
   #win h1 { font-size:40px; margin-bottom:10px; }
   #win p { color:#bfe0ff; margin-bottom:18px; font-size:17px; }
   #win button { pointer-events:auto; cursor:pointer; font-size:17px; font-weight:700; padding:12px 34px; border-radius:10px; border:0; background:#7CFC98; color:#04263f; }
+  #net { position:fixed; inset:0; background:radial-gradient(1200px 700px at 50% 30%, rgba(20,60,110,.93), rgba(3,10,22,.97)); color:#fff; display:none; flex-direction:column; align-items:center; justify-content:center; text-align:center; z-index:10; overflow-y:auto; padding:20px; }
+  #net h2 { font-size:30px; margin-bottom:6px; }
+  #net .sub { color:#bfe0ff; margin-bottom:10px; font-size:14px; }
+  .netRow { display:flex; gap:10px; margin:8px 0; flex-wrap:wrap; justify-content:center; }
+  .netBtn { pointer-events:auto; cursor:pointer; padding:12px 20px; border-radius:12px; border:1px solid rgba(255,255,255,.25); background:rgba(30,70,120,.55); color:#fff; font-size:15px; font-weight:600; }
+  .netBtn:hover { background:rgba(60,120,190,.7); }
+  #net input[type=text] { pointer-events:auto; padding:10px 12px; border-radius:9px; border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.12); color:#fff; font-size:15px; outline:none; }
+  #net input[type=checkbox] { pointer-events:auto; transform:scale(1.2); }
+  #serverList { display:flex; flex-direction:column; gap:8px; margin:8px 0 14px; min-width:300px; max-width:430px; }
+  .srv { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.07); font-size:14px; }
+  .srv button { pointer-events:auto; cursor:pointer; border:0; border-radius:8px; padding:7px 14px; font-weight:700; background:#6fd2ff; color:#04263f; }
+  .lobby { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.2); border-radius:14px; padding:18px 26px; min-width:320px; margin-bottom:12px; }
+  .lobby .code { font-size:30px; font-weight:800; letter-spacing:6px; color:#7CFC98; margin:6px 0; user-select:all; }
+  .netStatus { color:#ffd37a; font-size:13px; min-height:18px; margin-top:6px; }
+  #modeSel { pointer-events:auto; padding:9px 12px; border-radius:9px; border:1px solid rgba(255,255,255,.3); background:#1d4a75; color:#fff; font-size:14px; }
 </style>
 </head>
 <body>
@@ -83,6 +98,7 @@
     <button class="mode" data-mode="standard">🏊 Стандартный<small>как в первой версии</small></button>
     <button class="mode" data-mode="hard">🔥 Сложный<small>заметно больше</small></button>
     <button class="mode" data-mode="impossible">💀 Невозможный<small>полкилометра воды!</small></button>
+    <button class="mode" id="netBtn" style="grid-column:1/-1;background:rgba(124,252,152,.18);border-color:rgba(124,252,152,.45);">🌐 Играть по сети<small>кооператив: осушайте один бассейн вместе</small></button>
   </div>
   <div class="controls">
     WASD — ходить/плыть &nbsp;|&nbsp; Мышь — смотреть &nbsp;|&nbsp; ЛКМ у воды — зачерпнуть<br>
@@ -99,6 +115,65 @@
   <button id="winClose">В главное меню</button>
 </div>
 
+<div id="net">
+  <h2>🌐 Игра по сети</h2>
+  <div class="sub">Кооператив: вместе осушите один бассейн</div>
+
+  <div id="netHome">
+    <div class="netRow">
+      <button class="netBtn" id="createSrvBtn">➕ Создать сервер</button>
+      <button class="netBtn" id="joinCodeBtn">🔗 Присоединиться по коду</button>
+    </div>
+    <div class="sub" style="margin-top:8px;">Открытые сервера:</div>
+    <div id="serverList"><div class="sub">Загрузка…</div></div>
+    <button class="netBtn" id="netBackBtn">← Назад</button>
+    <div class="netStatus" id="netStatusHome"></div>
+  </div>
+
+  <div id="netCreate" style="display:none;">
+    <div class="netRow"><input type="text" id="srvName" maxlength="20" placeholder="Название сервера" style="width:230px;"></div>
+    <div class="netRow"><label style="font-size:14px;cursor:pointer;"><input type="checkbox" id="srvPrivate"> Приватный сервер (вход только по коду)</label></div>
+    <div class="netRow">
+      <button class="netBtn" id="createGoBtn" style="background:#7CFC98;color:#04263f;">Создать</button>
+      <button class="netBtn" id="createBackBtn">← Назад</button>
+    </div>
+    <div class="netStatus" id="netStatusCreate"></div>
+  </div>
+
+  <div id="netJoin" style="display:none;">
+    <div class="netRow"><input type="text" id="joinCode" maxlength="6" placeholder="КОД" style="width:190px;text-transform:uppercase;letter-spacing:4px;text-align:center;"></div>
+    <div class="netRow">
+      <button class="netBtn" id="joinGoBtn" style="background:#7CFC98;color:#04263f;">Подключиться</button>
+      <button class="netBtn" id="joinBackBtn">← Назад</button>
+    </div>
+    <div class="netStatus" id="netStatusJoin"></div>
+  </div>
+
+  <div id="netLobby" style="display:none;">
+    <div class="lobby">
+      <div>Код сервера (передай друзьям):</div>
+      <div class="code" id="lobbyCode"></div>
+      <div id="lobbyMode" style="margin:8px 0;font-size:14px;"><span id="lobbyModeLabel">Сложность:</span>
+        <select id="modeSel">
+          <option value="easy">Лёгкий</option>
+          <option value="standard" selected>Стандартный</option>
+          <option value="hard">Сложный</option>
+          <option value="impossible">Невозможный</option>
+        </select>
+        <span id="lobbyModeGuest" style="display:none;"></span>
+      </div>
+      <div class="sub" id="lobbyPlayers"></div>
+      <div class="sub" id="lobbyPrivate" style="color:#9fc3e8;"></div>
+    </div>
+    <div class="netRow">
+      <button class="netBtn" id="startSrvBtn" style="background:#7CFC98;color:#04263f;">▶ Начать игру</button>
+      <button class="netBtn" id="lobbyLeaveBtn">Покинуть</button>
+    </div>
+    <div class="netStatus" id="netStatusLobby"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -474,7 +549,7 @@ function buildWorld(modeKey) {
   const ceil = new THREE.Mesh(new THREE.BoxGeometry(dx2 * 2, 0.4, dz2 * 2), concreteMat(0xc6d2dc));
   ceil.position.y = hallH + 0.2;
   poolGroup.add(ceil);
-  const lampMat = new THREE.MeshBasicMaterial({ color: 0xf2f9ff });
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xcfe0ec });
   const cols = Math.min(8, Math.max(2, Math.round(hx / 8)));
   const rows = Math.min(6, Math.max(2, Math.round(hz / 8)));
   const spanX = cols > 1 ? hx * 1.6 / (cols - 1) : 0;
@@ -487,7 +562,7 @@ function buildWorld(modeKey) {
       poolGroup.add(lamp);
     }
   }
-  const stripMat = new THREE.MeshBasicMaterial({ color: 0xeaf4ff });
+  const stripMat = new THREE.MeshBasicMaterial({ color: 0xdce8f2 });
   function addStrip(x, z, sx, sz) {
     const s = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.15, sz), stripMat);
     s.position.set(x, hallH - 1.2, z);
@@ -499,9 +574,22 @@ function buildWorld(modeKey) {
   addStrip(-dx2 + 0.6, 0, 0.12, dz2 * 2 - 2);
   if (hx < 120) {
     for (const [lx, lz] of [[-hx / 2, -hz / 2], [hx / 2, -hz / 2], [-hx / 2, hz / 2], [hx / 2, hz / 2], [0, 0]]) {
-      const pl = new THREE.PointLight(0xfff6e8, 340, 0, 2);
-      pl.position.set(lx, hallH - 1.5, lz);
-      poolGroup.add(pl);
+      const sp = new THREE.SpotLight(0xfff3e0, 240, 0, 1.05, 0.5, 1.6);
+      sp.position.set(lx, hallH - 0.5, lz);
+      sp.target.position.set(lx, 0, lz);
+      sp.castShadow = true;
+      sp.shadow.mapSize.set(1024, 1024);
+      sp.shadow.camera.near = 1;
+      sp.shadow.camera.far = hallH + 6;
+      sp.shadow.bias = -0.0004;
+      poolGroup.add(sp, sp.target);
+    }
+  } else {
+    for (const [lx, lz] of [[-hx / 3, -hz / 3], [hx / 3, -hz / 3], [-hx / 3, hz / 3], [hx / 3, hz / 3], [0, 0]]) {
+      const sp = new THREE.SpotLight(0xfff3e0, 0.9, 0, 1.45, 0.6, 0);
+      sp.position.set(lx, hallH - 0.5, lz);
+      sp.target.position.set(lx, 0, lz);
+      poolGroup.add(sp, sp.target);
     }
   }
 
@@ -555,14 +643,15 @@ function buildWorld(modeKey) {
   dir.shadow.camera.far = 300;
   dir.shadow.camera.updateProjectionMatrix();
 
+  const kx = Math.min(hx * 0.6, 11);
   const standDir = new THREE.Vector3(-1, 0, -1).normalize();
-  stand.position.set(hx + 4.5, 0, hz + 4.5);
+  stand.position.set(kx, 0, hz + 4.5);
   stand.rotation.y = Math.atan2(standDir.x, standDir.z);
   shopVendor.group.position.copy(stand.position).add(new THREE.Vector3(0, 0, -1.0).applyAxisAngle(new THREE.Vector3(0, 1, 0), stand.rotation.y));
   shopVendor.group.rotation.y = stand.rotation.y;
 
   const buyerDir = new THREE.Vector3(1, 0, -1).normalize();
-  buySign.position.set(-hx - 4.5, 0, hz + 4.5);
+  buySign.position.set(-kx, 0, hz + 4.5);
   buySign.rotation.y = Math.atan2(buyerDir.x, buyerDir.z);
   waterBuyer.group.position.copy(buySign.position).add(new THREE.Vector3(0, 0, -0.95).applyAxisAngle(new THREE.Vector3(0, 1, 0), buySign.rotation.y));
   waterBuyer.group.rotation.y = buySign.rotation.y;
@@ -660,13 +749,13 @@ function buildTools() {
   basin.add(basinBody, basinBottom, basinRim, basinFill);
 
   const canister = new THREE.Group();
-  const canBody = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.24, 0.11), plastic);
-  const canCap = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 10), new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.5 }));
-  canCap.position.set(0.04, 0.145, 0);
-  const canHandle = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.012, 8, 16, Math.PI), plastic);
-  canHandle.position.set(-0.03, 0.13, 0);
-  const canFill = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.18, 0.075), waterFill);
-  canFill.position.y = -0.02;
+  const canBody = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.4, 0.18), plastic);
+  const canCap = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.07, 10), new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.5 }));
+  canCap.position.set(0.06, 0.235, 0);
+  const canHandle = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.015, 8, 16, Math.PI), plastic);
+  canHandle.position.set(-0.05, 0.21, 0);
+  const canFill = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.3, 0.115), waterFill);
+  canFill.position.y = -0.03;
   canister.add(canBody, canCap, canHandle, canFill);
 
   toolModels.spoon = spoon;
@@ -715,7 +804,9 @@ const ui = {
   win: document.getElementById('win'),
   winText: document.getElementById('winText'),
   underwater: document.getElementById('underwater'),
-  speech: document.getElementById('speech')
+  speech: document.getElementById('speech'),
+  net: document.getElementById('net'),
+  netBtn: document.getElementById('netBtn')
 };
 
 let toastTimer = null;
@@ -800,6 +891,10 @@ function finishScoop() {
   const taken = Math.min(t.vol * volScale(), state.volume);
   state.volume -= taken;
   state.carried = t.sell;
+  if (NET.connected && NET.code) {
+    if (NET.isHost) netPublish(TOPIC('room/' + NET.code), { type: 'vol', v: state.volume });
+    else netPublish(TOPIC('room/' + NET.code), { type: 'scoop', a: taken });
+  }
   spawnSplash(scoopPoint, 14, 2.2);
   splashSound(true);
   updateToolVisibility();
@@ -938,6 +1033,7 @@ ui.paused.addEventListener('click', () => {
   renderer.domElement.requestPointerLock();
 });
 document.querySelectorAll('.mode').forEach(b => {
+  if (!b.dataset.mode) return;
   b.addEventListener('click', () => {
     ensureAudio();
     startGame(b.dataset.mode);
@@ -1163,6 +1259,8 @@ function startGame(modeKey) {
 function showMenu() {
   state.inMenu = true;
   state.shopOpen = false;
+  if (NET.code || NET.connected) leaveNet();
+  hideNetScreens();
   ui.win.style.display = 'none';
   ui.shop.style.display = 'none';
   ui.overlay.style.display = 'flex';
@@ -1184,6 +1282,212 @@ function npcSay(npc, lines, chance) {
   ui.speech.textContent = lines[Math.floor(Math.random() * lines.length)];
   speech = { npc, until: clock.elapsedTime + 2.8 };
 }
+
+const NET = {
+  id: Math.random().toString(36).slice(2, 9),
+  name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
+  client: null, connected: false, code: null, isHost: false,
+  players: [], started: false, private: false, mode: 'standard',
+  screen: null, posTimer: 0, hbTimer: null, joinWaitTimer: null
+};
+const remoteHumans = {};
+const REMOTE_COLORS = [0xc0392b, 0x8e44ad, 0xd68910, 0x148f77, 0x2e4053, 0xb03a2e, 0x1f618d, 0x7d6608];
+const TOPIC = t => 'watersim/v1/' + t;
+const publicServers = new Map();
+
+function netStatus(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
+function netPublish(topic, obj) { if (NET.client && NET.connected) { try { NET.client.publish(topic, JSON.stringify(obj)); } catch {} } }
+function netSendState() {
+  netPublish(TOPIC('room/' + NET.code), { type: 'state', players: NET.players, mode: NET.mode, started: NET.started, private: NET.private });
+}
+
+function netConnect(onReady, statusId) {
+  if (typeof mqtt === 'undefined') { netStatus(statusId, 'Сетевая библиотека не загрузилась (проверь интернет)'); return; }
+  if (NET.connected && NET.client) { onReady(); return; }
+  netStatus(statusId, 'Подключение к серверу-ретранслятору…');
+  const c = mqtt.connect('wss://broker.emqx.io:8084/mqtt', { clientId: 'wsim_' + NET.id, connectTimeout: 9000, reconnectPeriod: 0, keepalive: 30 });
+  c.on('connect', () => {
+    NET.client = c; NET.connected = true;
+    c.subscribe(TOPIC('lobby'));
+    netStatus(statusId, '');
+    onReady();
+  });
+  c.on('message', onNetMessage);
+  c.on('error', () => netStatus(statusId, 'Ошибка подключения — попробуй ещё раз'));
+  c.on('close', () => { if (NET.client === c) NET.connected = false; });
+}
+
+function onNetMessage(topic, payload) {
+  let m; try { m = JSON.parse(payload.toString()); } catch { return; }
+  if (topic === TOPIC('lobby')) {
+    if (m.code && !m.private && !m.started && !m.gone) { publicServers.set(m.code, m); renderServerList(); }
+    return;
+  }
+  if (topic !== TOPIC('room/' + NET.code)) return;
+  switch (m.type) {
+    case 'state':
+      if (!NET.isHost) {
+        NET.players = m.players; NET.mode = m.mode; NET.started = m.started; NET.private = m.private;
+        clearTimeout(NET.joinWaitTimer);
+        if (NET.screen === 'joining') {
+          if (m.players.some(p => p.id === NET.id)) showNetScreen('netLobby');
+          else netStatus('netStatusJoin', 'Подключение…');
+        }
+        if (NET.screen === 'netLobby') renderLobby();
+      }
+      break;
+    case 'join':
+      if (NET.isHost && !NET.started) {
+        if (!NET.players.some(p => p.id === m.id)) {
+          NET.players.push({ id: m.id, name: m.name });
+          renderLobby(); netSendState();
+        } else netSendState();
+      }
+      break;
+    case 'leave':
+      if (NET.isHost) {
+        NET.players = NET.players.filter(p => p.id !== m.id);
+        renderLobby(); netSendState();
+      } else removeRemote(m.id);
+      break;
+    case 'start':
+      if (!NET.isHost) { NET.started = true; hideNetScreens(); startGame(m.mode); }
+      break;
+    case 'pos': updateRemote(m); break;
+    case 'scoop':
+      if (NET.isHost) {
+        state.volume = Math.max(0, state.volume - m.a);
+        netPublish(TOPIC('room/' + NET.code), { type: 'vol', v: state.volume });
+        if (state.volume <= 0 && !state.won) winGame();
+      }
+      break;
+    case 'vol':
+      if (!NET.isHost) state.volume = m.v;
+      break;
+  }
+}
+
+function updateRemote(m) {
+  if (m.id === NET.id) return;
+  let r = remoteHumans[m.id];
+  if (!r) {
+    const color = REMOTE_COLORS[Object.keys(remoteHumans).length % REMOTE_COLORS.length];
+    const human = makeHuman({ shirt: color, pants: 0x2c3440, hair: 0x3a2a18, hatColor: null });
+    scene.add(human.group);
+    r = remoteHumans[m.id] = { human, target: new THREE.Vector3(0, 0, 0), yaw: 0 };
+  }
+  r.target.set(m.x, m.y - 1.7, m.z);
+  r.yaw = m.yaw + Math.PI;
+  r.human.group.position.set(m.x, m.y - 1.7, m.z);
+}
+
+function removeRemote(id) {
+  const r = remoteHumans[id];
+  if (r) { scene.remove(r.human.group); delete remoteHumans[id]; }
+}
+
+function createServer(name, priv) {
+  netConnect(() => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    NET.code = Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    NET.isHost = true; NET.private = priv; NET.started = false; NET.mode = 'standard';
+    NET.players = [{ id: NET.id, name }];
+    NET.client.subscribe(TOPIC('room/' + NET.code));
+    showNetScreen('netLobby');
+    renderLobby();
+    clearInterval(NET.hbTimer);
+    NET.hbTimer = setInterval(() => {
+      if (!priv && !NET.started) netPublish(TOPIC('lobby'), { code: NET.code, name, players: NET.players.length, mode: NET.mode, started: false, ts: Date.now() });
+    }, 2500);
+  }, 'netStatusCreate');
+}
+
+function joinServer(code) {
+  netConnect(() => {
+    NET.code = code.toUpperCase().trim(); NET.isHost = false;
+    NET.client.subscribe(TOPIC('room/' + NET.code));
+    NET.screen = 'joining';
+    netPublish(TOPIC('room/' + NET.code), { type: 'join', id: NET.id, name: NET.name });
+    netStatus('netStatusJoin', 'Подключение…');
+    clearTimeout(NET.joinWaitTimer);
+    NET.joinWaitTimer = setTimeout(() => { if (NET.screen === 'joining') { netStatus('netStatusJoin', 'Сервер не найден или игра уже началась'); leaveNet(); } }, 6000);
+  }, 'netStatusJoin');
+}
+
+function leaveNet() {
+  if (NET.code) netPublish(TOPIC('room/' + NET.code), { type: 'leave', id: NET.id });
+  clearInterval(NET.hbTimer); clearTimeout(NET.joinWaitTimer);
+  for (const id of Object.keys(remoteHumans)) removeRemote(id);
+  publicServers.clear();
+  NET.code = null; NET.isHost = false; NET.started = false; NET.players = []; NET.screen = null;
+  if (NET.client) { try { NET.client.end(true); } catch {} NET.client = null; NET.connected = false; }
+}
+
+function renderLobby() {
+  document.getElementById('lobbyCode').textContent = NET.code;
+  document.getElementById('lobbyPlayers').textContent = 'Игроки: ' + NET.players.map(p => p.name + (p.id === NET.id ? ' (ты)' : '')).join(', ');
+  document.getElementById('lobbyPrivate').textContent = NET.private ? '🔒 Приватный — вход только по коду' : '🌍 Открытый — виден в списке серверов';
+  const sel = document.getElementById('modeSel');
+  const guestLabel = document.getElementById('lobbyModeGuest');
+  if (NET.isHost) {
+    sel.disabled = false; sel.value = NET.mode;
+    document.getElementById('lobbyModeLabel').style.display = '';
+    sel.style.display = '';
+    guestLabel.style.display = 'none';
+    document.getElementById('startSrvBtn').style.display = '';
+  } else {
+    sel.disabled = true;
+    document.getElementById('lobbyModeLabel').style.display = 'none';
+    sel.style.display = 'none';
+    guestLabel.style.display = '';
+    guestLabel.textContent = 'Сложность: ' + (MODES[NET.mode] ? MODES[NET.mode].name : NET.mode) + ' (выбирает хост)';
+    document.getElementById('startSrvBtn').style.display = 'none';
+  }
+}
+
+function renderServerList() {
+  const el = document.getElementById('serverList');
+  const now = Date.now();
+  for (const [k, v] of publicServers) if (now - v.ts > 12000) publicServers.delete(k);
+  const list = [...publicServers.values()];
+  if (!list.length) { el.innerHTML = '<div class="sub">Пока нет открытых серверов — создай свой!</div>'; return; }
+  el.innerHTML = list.map(v => `<div class="srv"><span>${v.name} · ${MODES[v.mode] ? MODES[v.mode].name : v.mode} · 👥 ${v.players}</span><button data-code="${v.code}">Войти</button></div>`).join('');
+  el.querySelectorAll('button[data-code]').forEach(b => b.addEventListener('click', () => joinServer(b.dataset.code)));
+}
+
+function showNetScreen(name) {
+  NET.screen = name;
+  for (const s of ['netHome', 'netCreate', 'netJoin', 'netLobby']) document.getElementById(s).style.display = s === name ? 'block' : 'none';
+  ui.net.style.display = 'flex';
+}
+function hideNetScreens() { NET.screen = null; ui.net.style.display = 'none'; }
+
+ui.netBtn.addEventListener('click', () => { ensureAudio(); netConnect(() => { renderServerList(); showNetScreen('netHome'); }, 'netStatusHome'); });
+document.getElementById('netBackBtn').addEventListener('click', () => { hideNetScreens(); });
+document.getElementById('createSrvBtn').addEventListener('click', () => showNetScreen('netCreate'));
+document.getElementById('joinCodeBtn').addEventListener('click', () => showNetScreen('netJoin'));
+document.getElementById('createBackBtn').addEventListener('click', () => showNetScreen('netHome'));
+document.getElementById('joinBackBtn').addEventListener('click', () => showNetScreen('netHome'));
+document.getElementById('createGoBtn').addEventListener('click', () => {
+  const name = document.getElementById('srvName').value.trim() || NET.name;
+  const priv = document.getElementById('srvPrivate').checked;
+  createServer(name, priv);
+});
+document.getElementById('joinGoBtn').addEventListener('click', () => {
+  const code = document.getElementById('joinCode').value.trim();
+  if (code.length < 4) { netStatus('netStatusJoin', 'Введи код сервера'); return; }
+  joinServer(code);
+});
+document.getElementById('lobbyLeaveBtn').addEventListener('click', () => { leaveNet(); hideNetScreens(); });
+document.getElementById('modeSel').addEventListener('change', e => { if (NET.isHost) { NET.mode = e.target.value; renderLobby(); netSendState(); } });
+document.getElementById('startSrvBtn').addEventListener('click', () => {
+  if (!NET.isHost) return;
+  NET.started = true;
+  netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode });
+  clearInterval(NET.hbTimer);
+  hideNetScreens();
+  startGame(NET.mode);
+});
 
 const clock = new THREE.Clock();
 function animate() {
@@ -1255,6 +1559,20 @@ function animate() {
       ui.speech.style.top = ((-v.y * 0.5 + 0.5) * innerHeight - 26) + 'px';
     } else ui.speech.style.display = 'none';
   } else ui.speech.style.display = 'none';
+
+  if (NET.connected && NET.code && !state.inMenu) {
+    NET.posTimer -= dt;
+    if (NET.posTimer <= 0) {
+      NET.posTimer = 0.1;
+      netPublish(TOPIC('room/' + NET.code), { type: 'pos', id: NET.id, x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), yaw: +player.yaw.toFixed(2) });
+    }
+    for (const id of Object.keys(remoteHumans)) {
+      const r = remoteHumans[id];
+      r.human.group.position.lerp(r.target, Math.min(1, dt * 9));
+      r.human.group.rotation.y = r.yaw;
+    }
+  }
+  if (!state.inMenu && !state.won && state.volume <= 0 && state.carried === 0 && water && !water.visible) winGame();
 
   updatePumps(dt);
   updateParticles(dt);
