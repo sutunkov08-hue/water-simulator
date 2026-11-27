@@ -1455,7 +1455,7 @@ function npcSay(npc, lines, chance) {
   speech = { npc, until: clock.elapsedTime + 2.8 };
 }
 
-const NET_VERSION = 10;
+const NET_VERSION = 11;
 const NET = {
   id: Math.random().toString(36).slice(2, 9),
   name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
@@ -1464,7 +1464,7 @@ const NET = {
   screen: null, posTimer: 0, hbTimer: null, joinWaitTimer: null
 };
 const remoteHumans = {};
-const remoteTmp = new THREE.Vector3();
+const REMOTE_RENDER_DELAY = 150;
 const REMOTE_COLORS = [0xc0392b, 0x8e44ad, 0xd68910, 0x148f77, 0x2e4053, 0xb03a2e, 0x1f618d, 0x7d6608];
 const TOPIC = t => 'watersim/v1/' + t;
 const publicServers = new Map();
@@ -1684,17 +1684,12 @@ function updateRemote(m) {
       human.hand.add(p);
       props[k] = p;
     }
-    r = remoteHumans[m.id] = { human, props, curTool: null, target: new THREE.Vector3(m.x, m.y - 1.7, m.z), rawPrev: new THREE.Vector3(m.x, m.y - 1.7, m.z), vel: new THREE.Vector3(), lastNet: performance.now(), yaw: m.yaw + Math.PI, moving: false, movingAmt: 0, walkPhase: 0 };
+    r = remoteHumans[m.id] = { human, props, curTool: null, snaps: [{ t: performance.now(), x: m.x, y: m.y - 1.7, z: m.z, yaw: m.yaw + Math.PI }], yaw: m.yaw + Math.PI, moving: false, movingAmt: 0, walkPhase: 0 };
     r.human.group.position.copy(r.target);
     r.human.group.rotation.y = r.yaw;
   }
-  const now = performance.now();
-  const dts = Math.max(0.02, (now - r.lastNet) / 1000);
-  r.vel.set((m.x - r.rawPrev.x) / dts, (m.y - 1.7 - r.rawPrev.y) / dts, (m.z - r.rawPrev.z) / dts);
-  r.rawPrev.set(m.x, m.y - 1.7, m.z);
-  r.lastNet = now;
-  r.target.set(m.x, m.y - 1.7, m.z);
-  r.yaw = m.yaw + Math.PI;
+  r.snaps.push({ t: performance.now(), x: m.x, y: m.y - 1.7, z: m.z, yaw: m.yaw + Math.PI });
+  if (r.snaps.length > 8) r.snaps.shift();
   r.moving = !!m.mv;
   const tool = m.tool || null;
   if (tool !== r.curTool) {
@@ -1932,15 +1927,36 @@ function animate() {
   if (NET.connected && NET.code && !state.inMenu) {
     NET.posTimer -= dt;
     if (NET.posTimer <= 0) {
-      NET.posTimer = 0.033;
+      NET.posTimer = 0.066;
       const mv = (keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD']) ? 1 : 0;
       netPublish(TOPIC('room/' + NET.code), { type: 'pos', id: NET.id, x: +player.pos.x.toFixed(2), y: +player.pos.y.toFixed(2), z: +player.pos.z.toFixed(2), yaw: +player.yaw.toFixed(2), tool: state.tool, mv });
     }
   }
   for (const id of Object.keys(remoteHumans)) {
     const r = remoteHumans[id];
-    remoteTmp.copy(r.target).addScaledVector(r.vel, Math.min((performance.now() - r.lastNet) / 1000, 0.3));
-    r.human.group.position.lerp(remoteTmp, Math.min(1, dt * 14));
+    const snaps = r.snaps;
+    if (snaps.length) {
+      const rt = performance.now() - REMOTE_RENDER_DELAY;
+      let a = snaps[0], b = null;
+      for (let i = snaps.length - 1; i >= 0; i--) {
+        if (snaps[i].t <= rt) { a = snaps[i]; b = snaps[i + 1] || null; break; }
+      }
+      let px = a.x, py = a.y, pz = a.z, pyaw = a.yaw;
+      if (b) {
+        const f = Math.max(0, Math.min(1, (rt - a.t) / Math.max(1, b.t - a.t)));
+        px = a.x + (b.x - a.x) * f;
+        py = a.y + (b.y - a.y) * f;
+        pz = a.z + (b.z - a.z) * f;
+        let dyaw = b.yaw - a.yaw;
+        while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+        while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+        pyaw = a.yaw + dyaw * f;
+      }
+      r.human.group.position.x += (px - r.human.group.position.x) * Math.min(1, dt * 20);
+      r.human.group.position.y += (py - r.human.group.position.y) * Math.min(1, dt * 20);
+      r.human.group.position.z += (pz - r.human.group.position.z) * Math.min(1, dt * 20);
+      r.yaw = pyaw;
+    }
     let dy = r.yaw - r.human.group.rotation.y;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
