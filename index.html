@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Осуши Бассейн — 3D симулятор воды</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; font-family:'Segoe UI',system-ui,sans-serif; background:#000; }
+  canvas { display:block; }
+  #hud { position:fixed; inset:0; pointer-events:none; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.7); }
+  .panel { position:absolute; background:rgba(10,25,45,.72); border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:10px 14px; backdrop-filter:blur(4px); }
+  #stats { top:14px; left:14px; font-size:15px; line-height:1.55; min-width:250px; }
+  #stats .money { font-size:22px; font-weight:700; color:#7CFC98; }
+  #pool { top:14px; right:14px; text-align:right; font-size:15px; line-height:1.55; }
+  #waterbar { width:210px; height:10px; background:rgba(255,255,255,.15); border-radius:6px; margin-top:6px; overflow:hidden; margin-left:auto; }
+  #waterbar > div { height:100%; background:linear-gradient(90deg,#2f8fd6,#6fd2ff); width:100%; }
+  #prompt { position:absolute; bottom:115px; left:50%; transform:translateX(-50%); font-size:17px; background:rgba(10,25,45,.78); border:1px solid rgba(255,255,255,.22); padding:8px 16px; border-radius:10px; display:none; white-space:nowrap; }
+  #progressWrap { position:absolute; bottom:72px; left:50%; transform:translateX(-50%); width:260px; height:12px; background:rgba(255,255,255,.15); border-radius:8px; display:none; overflow:hidden; }
+  #progressWrap > div { height:100%; background:#6fd2ff; width:0%; }
+  #toast { position:absolute; top:84px; left:50%; transform:translateX(-50%); font-size:16px; background:rgba(10,25,45,.88); border:1px solid rgba(255,255,255,.25); padding:10px 18px; border-radius:10px; opacity:0; transition:opacity .25s; max-width:72%; text-align:center; }
+  #shop { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:440px; max-width:94vw; background:rgba(8,20,38,.95); border:1px solid rgba(255,255,255,.25); border-radius:16px; padding:22px; color:#fff; display:none; z-index:5; }
+  #shop h2 { text-align:center; margin-bottom:4px; }
+  #shop .sub { text-align:center; color:#9fc3e8; font-size:13px; margin-bottom:14px; }
+  .item { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border:1px solid rgba(255,255,255,.15); border-radius:12px; margin-bottom:10px; }
+  .item .info { flex:1; }
+  .item .name { font-weight:600; font-size:16px; }
+  .item .desc { font-size:12.5px; color:#9fc3e8; margin-top:2px; line-height:1.4; }
+  .item button { pointer-events:auto; cursor:pointer; border:0; border-radius:9px; padding:9px 14px; font-weight:700; font-size:14px; color:#04263f; background:#6fd2ff; white-space:nowrap; }
+  .item button:disabled { opacity:.4; cursor:not-allowed; }
+  .item button.owned { background:#7CFC98; }
+  #shopClose { pointer-events:auto; display:block; margin:8px auto 0; cursor:pointer; background:none; border:1px solid rgba(255,255,255,.3); color:#fff; padding:8px 26px; border-radius:9px; font-size:14px; }
+  #overlay { position:fixed; inset:0; background:radial-gradient(1200px 700px at 50% 30%, rgba(20,60,110,.92), rgba(3,10,22,.97)); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; z-index:10; }
+  #overlay h1 { font-size:42px; margin-bottom:10px; }
+  #overlay p { color:#bfe0ff; max-width:600px; line-height:1.6; margin-bottom:4px; }
+  #overlay .controls { margin:16px 0 22px; color:#9fc3e8; font-size:14px; line-height:1.9; }
+  #play { pointer-events:auto; cursor:pointer; font-size:20px; font-weight:700; padding:14px 46px; border-radius:12px; border:0; background:linear-gradient(180deg,#6fd2ff,#2f8fd6); color:#04263f; }
+  #paused { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(3,10,22,.6); color:#fff; font-size:24px; z-index:8; cursor:pointer; }
+  #win { position:fixed; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; background:rgba(3,10,22,.82); color:#fff; z-index:9; text-align:center; }
+  #win h1 { font-size:40px; margin-bottom:10px; }
+  #win p { color:#bfe0ff; margin-bottom:18px; }
+  #win button { pointer-events:auto; cursor:pointer; font-size:17px; font-weight:700; padding:12px 34px; border-radius:10px; border:0; background:#7CFC98; color:#04263f; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="stats" class="panel">
+    <div class="money" id="money">$0</div>
+    <div id="hand">Руки пусты</div>
+    <div id="tool">Инструмент: Ложка</div>
+  </div>
+  <div id="pool" class="panel">
+    <div>Вода в бассейне: <b id="waterPct">100%</b></div>
+    <div id="waterbar"><div></div></div>
+    <div id="pumpsLine" style="margin-top:6px;">Насосы: 0 (до $3 / 8 сек каждый)</div>
+  </div>
+  <div id="prompt"></div>
+  <div id="progressWrap"><div></div></div>
+  <div id="toast"></div>
+</div>
+
+<div id="shop">
+  <h2>🛒 Магазин</h2>
+  <div class="sub">Покупай инструменты и насосы. Воду продавай продавцу у бассейна.</div>
+  <div id="shopItems"></div>
+  <button id="shopClose">Закрыть (B)</button>
+</div>
+
+<div id="overlay">
+  <h1>🌊 Осуши Бассейн</h1>
+  <p>Перед тобой огромный бассейн, полный воды. Зачерпывай воду инструментом и относить её продавцу, чтобы получить деньги. Зарабатывай, покупай стакан, таз и насосы — и осуши бассейн полностью!</p>
+  <div class="controls">
+    WASD — ходить &nbsp;|&nbsp; Мышь — смотреть &nbsp;|&nbsp; ЛКМ (у воды) — зачерпнуть<br>
+    E — продать воду / открыть магазин &nbsp;|&nbsp; B — магазин<br>
+    1 — ложка &nbsp; 2 — стакан &nbsp; 3 — таз
+  </div>
+  <button id="play">▶ Играть</button>
+</div>
+
+<div id="paused">Пауза — кликни, чтобы продолжить</div>
+
+<div id="win">
+  <h1>🏆 Бассейн осушен!</h1>
+  <p id="winText"></p>
+  <button id="winClose">Продолжить</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { Water } from 'three/addons/objects/Water.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+
+const TOOLS = {
+  spoon: { key:'1', name:'Ложка',  price:0,  sell:1,  vol:0.5, time:1.5, desc:'Зачерпывает немного воды. Продажа: $1 за черпок.' },
+  cup:   { key:'2', name:'Стакан', price:20, sell:5,  vol:2,   time:1.1, desc:'Вместимее ложки. Продажа: $5 за стакан.' },
+  basin: { key:'3', name:'Таз',    price:50, sell:15, vol:6,   time:1.4, desc:'Черпает сразу много. Продажа: $15 за таз.' }
+};
+const PUMP_PRICE = 30, PUMP_PERIOD = 8, PUMP_INCOME = 3, MAX_PUMPS = 8;
+const MAX_VOLUME = 1200;
+const POOL = { hx:20, hz:12.5, depth:2.5, wallT:0.6, deckX:34, deckZ:27 };
+const SELLER_POS = new THREE.Vector3(25, 0, 2);
+const STAND_POS  = new THREE.Vector3(25, 0, -4);
+
+const state = {
+  money: 0,
+  tool: 'spoon',
+  owned: { spoon:true, cup:false, basin:false },
+  carried: 0,
+  volume: MAX_VOLUME,
+  scooping: false,
+  scoopT: 0,
+  shopOpen: false,
+  won: false,
+  totalSold: 0
+};
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 2000);
+scene.add(camera);
+
+const sunDir = new THREE.Vector3();
+const sky = new Sky();
+sky.scale.setScalar(10000);
+scene.add(sky);
+const su = sky.material.uniforms;
+su.turbidity.value = 6;
+su.rayleigh.value = 1.8;
+su.mieCoefficient.value = 0.005;
+su.mieDirectionalG.value = 0.8;
+sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 42), THREE.MathUtils.degToRad(120));
+su.sunPosition.value.copy(sunDir);
+
+function makeWaterNormals(size = 256) {
+  const waves = [];
+  for (let i = 0; i < 26; i++) {
+    waves.push({
+      fx: 1 + Math.floor(Math.random() * 5),
+      fy: 1 + Math.floor(Math.random() * 5),
+      sx: Math.random() < 0.5 ? 1 : -1,
+      sy: Math.random() < 0.5 ? 1 : -1,
+      amp: 0.4 + Math.random() * 0.6,
+      ph: Math.random() * Math.PI * 2
+    });
+  }
+  const h = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size, v = y / size;
+      let s = 0;
+      for (const w of waves) s += w.amp * Math.sin(2 * Math.PI * (w.fx * u * w.sx + w.fy * v * w.sy) + w.ph);
+      h[y * size + x] = s;
+    }
+  }
+  const data = new Uint8Array(size * size * 4);
+  const at = (x, y) => h[((y + size) % size) * size + ((x + size) % size)];
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (at(x + 1, y) - at(x - 1, y)) * 2.2;
+      const dy = (at(x, y + 1) - at(x, y - 1)) * 2.2;
+      const n = new THREE.Vector3(-dx, 1, -dy).normalize();
+      const i = (y * size + x) * 4;
+      data[i] = (n.x * 0.5 + 0.5) * 255;
+      data[i + 1] = (n.z * 0.5 + 0.5) * 255;
+      data[i + 2] = (n.y * 0.5 + 0.5) * 255;
+      data[i + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const water = new Water(new THREE.PlaneGeometry(POOL.hx * 2 - 0.3, POOL.hz * 2 - 0.3, 64, 64), {
+  textureWidth: 512,
+  textureHeight: 512,
+  waterNormals: makeWaterNormals(),
+  sunDirection: sunDir.clone(),
+  sunColor: 0xffffff,
+  waterColor: 0x0a5c8a,
+  distortionScale: 2.6,
+  fog: false
+});
+water.rotation.x = -Math.PI / 2;
+water.position.y = -0.2;
+scene.add(water);
+
+const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x8a7a5a, 1.1);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xfff3d6, 2.2);
+dir.position.set(45, 60, 25);
+dir.castShadow = true;
+dir.shadow.mapSize.set(2048, 2048);
+dir.shadow.camera.left = -50;
+dir.shadow.camera.right = 50;
+dir.shadow.camera.top = 50;
+dir.shadow.camera.bottom = -50;
+dir.shadow.camera.far = 160;
+scene.add(dir);
+
+function concreteMat(color) {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0.02 });
+}
+const wallMat = concreteMat(0x9fb4c4);
+const deckMat = concreteMat(0xb9c6cf);
+const floorMat = concreteMat(0x6e88a0);
+
+const deck = new THREE.Mesh(new THREE.BoxGeometry(POOL.deckX * 2 + 4, 0.4, POOL.deckZ * 2 + 4), deckMat);
+deck.position.y = -0.2;
+deck.receiveShadow = true;
+scene.add(deck);
+
+const poolFloor = new THREE.Mesh(new THREE.BoxGeometry(POOL.hx * 2, 0.3, POOL.hz * 2), floorMat);
+poolFloor.position.y = -POOL.depth - 0.15;
+poolFloor.receiveShadow = true;
+scene.add(poolFloor);
+
+function addWall(x, z, sx, sz) {
+  const w = new THREE.Mesh(new THREE.BoxGeometry(sx, POOL.depth, sz), wallMat);
+  w.position.set(x, -POOL.depth / 2, z);
+  w.castShadow = true;
+  w.receiveShadow = true;
+  scene.add(w);
+}
+const wt = POOL.wallT;
+addWall(0, POOL.hz + wt / 2, POOL.hx * 2 + wt * 2, wt);
+addWall(0, -POOL.hz - wt / 2, POOL.hx * 2 + wt * 2, wt);
+addWall(POOL.hx + wt / 2, 0, wt, POOL.hz * 2);
+addWall(-POOL.hx - wt / 2, 0, wt, POOL.hz * 2);
+
+function makeTextTexture(text, bg = '#14456e', fg = '#ffffff') {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 160;
+  const g = c.getContext('2d');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, 512, 160);
+  g.strokeStyle = 'rgba(255,255,255,.5)';
+  g.lineWidth = 10;
+  g.strokeRect(8, 8, 496, 144);
+  g.font = 'bold 84px Arial';
+  g.fillStyle = fg;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 256, 84);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const seller = new THREE.Group();
+{
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.9, 6, 14), new THREE.MeshStandardMaterial({ color: 0x2e6da4, roughness: 0.8 }));
+  body.position.y = 1.05;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 20, 16), new THREE.MeshStandardMaterial({ color: 0xe8b98c, roughness: 0.75 }));
+  head.position.y = 1.95;
+  const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.06, 20), new THREE.MeshStandardMaterial({ color: 0xd8b04a, roughness: 0.7 }));
+  hat.position.y = 2.16;
+  const hatTop = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.22, 20), hat.material);
+  hatTop.position.y = 2.3;
+  const apron = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.12), new THREE.MeshStandardMaterial({ color: 0x8a2f2f, roughness: 0.85 }));
+  apron.position.set(0, 0.95, 0.3);
+  for (const m of [body, head, hat, hatTop, apron]) { m.castShadow = true; seller.add(m); }
+}
+seller.position.copy(SELLER_POS);
+seller.rotation.y = -Math.PI / 2;
+scene.add(seller);
+
+const stand = new THREE.Group();
+{
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.1, 1.0), new THREE.MeshStandardMaterial({ color: 0x7a4f2a, roughness: 0.85 }));
+  counter.position.y = 0.55;
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.14, 1.5), new THREE.MeshStandardMaterial({ color: 0xd8b04a, roughness: 0.7 }));
+  roof.position.y = 2.5;
+  const postL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.9, 10), counter.material);
+  postL.position.set(-1.3, 1.95, -0.6);
+  const postR = postL.clone();
+  postR.position.x = 1.3;
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.8), new THREE.MeshBasicMaterial({ map: makeTextTexture('МАГАЗИН') }));
+  sign.position.set(0, 3.05, 0);
+  for (const m of [counter, roof, postL, postR]) m.castShadow = true;
+  stand.add(counter, roof, postL, postR, sign);
+}
+stand.position.copy(STAND_POS);
+stand.rotation.y = -Math.PI / 2;
+scene.add(stand);
+
+const pumpSpots = [];
+for (let i = 0; i < 4; i++) pumpSpots.push(new THREE.Vector3(-13.5 + i * 9, 0, POOL.hz + 1.15));
+for (let i = 0; i < 4; i++) pumpSpots.push(new THREE.Vector3(-13.5 + i * 9, 0, -POOL.hz - 1.15));
+const pumps = [];
+
+function buildPump() {
+  const g = new THREE.Group();
+  const red = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.6, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x333940, roughness: 0.5, metalness: 0.5 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), red);
+  body.position.y = 0.35;
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.0, 12), dark);
+  pipe.position.y = 1.1;
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.05, 10, 22), dark);
+  wheel.position.set(0, 1.62, 0);
+  wheel.rotation.x = Math.PI / 2;
+  for (const m of [body, pipe, wheel]) { m.castShadow = true; g.add(m); }
+  g.userData.wheel = wheel;
+  return g;
+}
+
+const obstacles = [
+  { pos: SELLER_POS, r: 0.8 },
+  { pos: STAND_POS, r: 1.6 }
+];
+
+const player = {
+  pos: new THREE.Vector3(0, 1.7, 18),
+  yaw: Math.PI,
+  pitch: 0
+};
+camera.position.copy(player.pos);
+
+const toolGroup = new THREE.Group();
+toolGroup.position.set(0.34, -0.34, -0.72);
+camera.add(toolGroup);
+const toolModels = {};
+const fillMeshes = {};
+
+function buildTools() {
+  const silver = new THREE.MeshStandardMaterial({ color: 0xd9dde2, roughness: 0.25, metalness: 0.9 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0xcfe9f5, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.45, side: THREE.DoubleSide });
+  const blue = new THREE.MeshStandardMaterial({ color: 0x2e86c1, roughness: 0.5, metalness: 0.15, side: THREE.DoubleSide });
+  const waterFill = new THREE.MeshStandardMaterial({ color: 0x4db2e8, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 });
+
+  const spoon = new THREE.Group();
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.02, 0.42, 10), silver);
+  handle.rotation.x = Math.PI / 2;
+  handle.position.z = -0.2;
+  const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.075, 18, 12), silver);
+  bowl.scale.set(1, 0.45, 1.3);
+  const spoonFill = new THREE.Mesh(new THREE.SphereGeometry(0.06, 14, 10), waterFill);
+  spoonFill.scale.set(1, 0.4, 1.2);
+  spoonFill.position.y = 0.015;
+  spoon.add(handle, bowl, spoonFill);
+  spoon.rotation.x = 0.35;
+
+  const cup = new THREE.Group();
+  const cupBody = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.058, 0.17, 20, 1, true), glass);
+  const cupBottom = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.012, 20), glass);
+  cupBottom.position.y = -0.08;
+  const cupFill = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.05, 0.12, 20), waterFill);
+  cup.add(cupBody, cupBottom, cupFill);
+
+  const basin = new THREE.Group();
+  const basinBody = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.13, 0.13, 24, 1, true), blue);
+  const basinBottom = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.015, 24), blue);
+  basinBottom.position.y = -0.062;
+  const basinRim = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.012, 8, 26), blue);
+  basinRim.rotation.x = Math.PI / 2;
+  basinRim.position.y = 0.065;
+  const basinFill = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.12, 0.09, 24), waterFill);
+  basinFill.position.y = -0.01;
+  basin.add(basinBody, basinBottom, basinRim, basinFill);
+
+  toolModels.spoon = spoon;
+  toolModels.cup = cup;
+  toolModels.basin = basin;
+  fillMeshes.spoon = spoonFill;
+  fillMeshes.cup = cupFill;
+  fillMeshes.basin = basinFill;
+  for (const k of Object.keys(toolModels)) {
+    toolModels[k].visible = false;
+    toolGroup.add(toolModels[k]);
+  }
+}
+buildTools();
+
+const raycaster = new THREE.Raycaster();
+raycaster.far = 4.6;
+const centerNDC = new THREE.Vector2(0, 0);
+
+const keys = {};
+let locked = false;
+
+const ui = {
+  money: document.getElementById('money'),
+  hand: document.getElementById('hand'),
+  tool: document.getElementById('tool'),
+  waterPct: document.getElementById('waterPct'),
+  waterBar: document.querySelector('#waterbar > div'),
+  pumpsLine: document.getElementById('pumpsLine'),
+  prompt: document.getElementById('prompt'),
+  progress: document.getElementById('progressWrap'),
+  progressFill: document.querySelector('#progressWrap > div'),
+  toast: document.getElementById('toast'),
+  shop: document.getElementById('shop'),
+  shopItems: document.getElementById('shopItems'),
+  overlay: document.getElementById('overlay'),
+  paused: document.getElementById('paused'),
+  win: document.getElementById('win'),
+  winText: document.getElementById('winText')
+};
+
+let toastTimer = null;
+function toast(msg, ms = 2600) {
+  ui.toast.textContent = msg;
+  ui.toast.style.opacity = 1;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { ui.toast.style.opacity = 0; }, ms);
+}
+
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+function tone(freq, dur = 0.12, type = 'sine', vol = 0.12, delay = 0) {
+  if (!audioCtx) return;
+  const t0 = audioCtx.currentTime + delay;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t0);
+  o.stop(t0 + dur + 0.05);
+}
+function splashSound() {
+  if (!audioCtx) return;
+  const dur = 0.28;
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'bandpass';
+  f.frequency.value = 900;
+  const g = audioCtx.createGain();
+  g.gain.value = 0.25;
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start();
+}
+function sellSound() { tone(660, 0.1, 'triangle', 0.14); tone(990, 0.14, 'triangle', 0.14, 0.09); }
+function buySound() { tone(520, 0.1, 'square', 0.08); tone(780, 0.12, 'square', 0.08, 0.08); }
+function errorSound() { tone(160, 0.2, 'sawtooth', 0.08); }
+
+function equip(key) {
+  if (!state.owned[key]) { toast(`${TOOLS[key].name} ещё не куплен — загляни в магазин (B)`); errorSound(); return; }
+  state.tool = key;
+  for (const k of Object.keys(toolModels)) toolModels[k].visible = k === key;
+}
+
+function updateToolVisibility() {
+  for (const k of Object.keys(toolModels)) toolModels[k].visible = k === state.tool;
+  for (const k of Object.keys(fillMeshes)) fillMeshes[k].visible = state.carried > 0 && k === state.tool;
+}
+
+function tryStartScoop() {
+  if (state.shopOpen || state.scooping) return;
+  if (state.volume <= 0) { toast('В бассейне больше нет воды!'); return; }
+  if (state.carried > 0) { toast('Сначала отнеси воду продавцу!'); errorSound(); return; }
+  raycaster.setFromCamera(centerNDC, camera);
+  const hits = water.visible ? raycaster.intersectObject(water) : [];
+  if (!hits.length) { toast('Подойди к краю бассейна и смотри на воду'); return; }
+  state.scooping = true;
+  state.scoopT = 0;
+}
+
+function finishScoop() {
+  const t = TOOLS[state.tool];
+  state.scooping = false;
+  const taken = Math.min(t.vol, state.volume);
+  state.volume -= taken;
+  state.carried = t.sell;
+  splashSound();
+  updateToolVisibility();
+  toast(`Зачерпнул ${t.name.toLowerCase()} воды! Отнеси продавцу (+$${t.sell})`);
+  if (state.volume <= 0 && !state.won) {
+    state.won = true;
+    ui.winText.textContent = `Ты заработал $${state.totalSold} и осушил огромный бассейн. Отличная работа!`;
+    ui.win.style.display = 'flex';
+    document.exitPointerLock();
+  }
+}
+
+function sellWater() {
+  if (state.carried <= 0) { toast('У тебя нет воды, чтобы продать'); errorSound(); return; }
+  state.money += state.carried;
+  state.totalSold += state.carried;
+  toast(`Продано за $${state.carried}!`, 1600);
+  state.carried = 0;
+  sellSound();
+  updateToolVisibility();
+}
+
+function renderShop() {
+  let html = '';
+  for (const key of ['cup', 'basin']) {
+    const t = TOOLS[key];
+    const owned = state.owned[key];
+    const can = state.money >= t.price;
+    html += `<div class="item">
+      <div class="info"><div class="name">${t.name}</div><div class="desc">${t.desc}</div></div>
+      <button data-buy="${key}" ${owned || !can ? 'disabled' : ''} class="${owned ? 'owned' : ''}">${owned ? 'Куплено ✓' : '$' + t.price}</button>
+    </div>`;
+  }
+  const pumpFull = pumps.length >= MAX_PUMPS;
+  const canPump = state.money >= PUMP_PRICE;
+  html += `<div class="item">
+    <div class="info"><div class="name">Насос (${pumps.length}/${MAX_PUMPS})</div><div class="desc">Ставится у бассейна и приносит $${PUMP_INCOME} каждые ${PUMP_PERIOD} сек, откачивая воду.</div></div>
+    <button data-buy="pump" ${pumpFull || !canPump ? 'disabled' : ''}>$${PUMP_PRICE}</button>
+  </div>`;
+  ui.shopItems.innerHTML = html;
+  ui.shopItems.querySelectorAll('button[data-buy]').forEach(b => {
+    b.addEventListener('click', () => buy(b.dataset.buy));
+  });
+}
+
+function buy(key) {
+  if (key === 'pump') {
+    if (pumps.length >= MAX_PUMPS) return;
+    if (state.money < PUMP_PRICE) { errorSound(); return; }
+    state.money -= PUMP_PRICE;
+    const g = buildPump();
+    g.position.copy(pumpSpots[pumps.length]);
+    scene.add(g);
+    pumps.push({ group: g, timer: 0 });
+    toast('Насос установлен! Он сам качает воду и приносит деньги.');
+    buySound();
+  } else {
+    const t = TOOLS[key];
+    if (state.owned[key] || state.money < t.price) { errorSound(); return; }
+    state.money -= t.price;
+    state.owned[key] = true;
+    equip(key);
+    toast(`Куплен ${t.name.toLowerCase()}! Продажа воды: $${t.sell} за черпок.`);
+    buySound();
+  }
+  renderShop();
+}
+
+function openShop() {
+  state.shopOpen = true;
+  renderShop();
+  ui.shop.style.display = 'block';
+  document.exitPointerLock();
+}
+function closeShop() {
+  state.shopOpen = false;
+  ui.shop.style.display = 'none';
+  if (!state.won) renderer.domElement.requestPointerLock();
+}
+
+function handleInteract() {
+  const dSeller = player.pos.distanceTo(SELLER_POS);
+  const dStand = player.pos.distanceTo(STAND_POS);
+  if (dSeller < 3.2) { sellWater(); return; }
+  if (dStand < 3.5) { state.shopOpen ? closeShop() : openShop(); }
+}
+
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Digit1') equip('spoon');
+  if (e.code === 'Digit2') equip('cup');
+  if (e.code === 'Digit3') equip('basin');
+  if (e.code === 'KeyE') {
+    if (state.shopOpen) closeShop();
+    else if (locked) handleInteract();
+  }
+  if (e.code === 'KeyB') {
+    if (state.shopOpen) closeShop();
+    else if (locked) openShop();
+  }
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+document.addEventListener('mousemove', e => {
+  if (!locked) return;
+  player.yaw -= e.movementX * 0.0022;
+  player.pitch -= e.movementY * 0.0022;
+  player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch));
+});
+document.addEventListener('mousedown', e => {
+  if (locked && e.button === 0) tryStartScoop();
+});
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === renderer.domElement;
+  if (!locked && !state.shopOpen && !state.won) ui.paused.style.display = 'flex';
+  if (locked) ui.paused.style.display = 'none';
+});
+ui.paused.addEventListener('click', () => {
+  ensureAudio();
+  renderer.domElement.requestPointerLock();
+});
+document.getElementById('play').addEventListener('click', () => {
+  ensureAudio();
+  ui.overlay.style.display = 'none';
+  renderer.domElement.requestPointerLock();
+});
+document.getElementById('shopClose').addEventListener('click', closeShop);
+document.getElementById('winClose').addEventListener('click', () => {
+  ui.win.style.display = 'none';
+  renderer.domElement.requestPointerLock();
+});
+addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+function movePlayer(dt) {
+  const speed = (keys['ShiftLeft'] ? 8 : 4.6) * dt;
+  const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const r = new THREE.Vector3(-f.z, 0, f.x);
+  const move = new THREE.Vector3();
+  if (keys['KeyW']) move.add(f);
+  if (keys['KeyS']) move.sub(f);
+  if (keys['KeyD']) move.add(r);
+  if (keys['KeyA']) move.sub(r);
+  if (!move.lengthSq()) return;
+  move.normalize().multiplyScalar(speed);
+  const next = player.pos.clone().add(move);
+  next.x = Math.max(-POOL.deckX, Math.min(POOL.deckX, next.x));
+  next.z = Math.max(-POOL.deckZ, Math.min(POOL.deckZ, next.z));
+  const rad = 0.45;
+  const hx = POOL.hx + rad, hz = POOL.hz + rad;
+  if (Math.abs(next.x) < hx && Math.abs(next.z) < hz) {
+    const px = hx - Math.abs(next.x);
+    const pz = hz - Math.abs(next.z);
+    if (px < pz) next.x = Math.sign(next.x) * hx;
+    else next.z = Math.sign(next.z) * hz;
+  }
+  for (const o of obstacles) {
+    const dx = next.x - o.pos.x, dz = next.z - o.pos.z;
+    const d = Math.hypot(dx, dz);
+    const min = o.r + rad;
+    if (d < min && d > 0.0001) {
+      next.x = o.pos.x + dx / d * min;
+      next.z = o.pos.z + dz / d * min;
+    }
+  }
+  player.pos.copy(next);
+}
+
+function updatePumps(dt) {
+  if (state.volume <= 0) return;
+  for (const p of pumps) {
+    p.timer += dt;
+    p.group.userData.wheel.rotation.z += dt * 4;
+    if (p.timer >= PUMP_PERIOD) {
+      p.timer -= PUMP_PERIOD;
+      state.money += PUMP_INCOME;
+      state.volume = Math.max(0, state.volume - 1.5);
+      tone(740, 0.07, 'sine', 0.05);
+    }
+  }
+}
+
+function updateHUD() {
+  ui.money.textContent = `$${state.money}`;
+  const t = TOOLS[state.tool];
+  ui.tool.textContent = `Инструмент: ${t.name} (продажа $${t.sell})`;
+  ui.hand.textContent = state.carried > 0 ? `В руках: вода (+$${state.carried}) — продай продавцу` : 'Руки пусты — зачерпни воду (ЛКМ у воды)';
+  const pct = Math.max(0, Math.ceil(state.volume / MAX_VOLUME * 100));
+  ui.waterPct.textContent = pct + '%';
+  ui.waterBar.style.width = pct + '%';
+  ui.pumpsLine.textContent = `Насосы: ${pumps.length} (до $${PUMP_INCOME} / ${PUMP_PERIOD} сек каждый)`;
+}
+
+function updatePrompt() {
+  let text = '';
+  if (!state.shopOpen && locked) {
+    if (player.pos.distanceTo(SELLER_POS) < 3.2) {
+      text = state.carried > 0 ? `E — продать воду продавцу (+$${state.carried})` : 'Продавец: принеси мне воду!';
+    } else if (player.pos.distanceTo(STAND_POS) < 3.5) {
+      text = 'E — открыть магазин';
+    }
+  }
+  ui.prompt.style.display = text ? 'block' : 'none';
+  ui.prompt.textContent = text;
+}
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (locked && !state.shopOpen) movePlayer(dt);
+  camera.position.copy(player.pos);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = player.yaw;
+  camera.rotation.x = player.pitch;
+
+  water.material.uniforms['time'].value += dt * 0.55;
+  water.position.y = -POOL.depth + (POOL.depth - 0.2) * (state.volume / MAX_VOLUME);
+  if (state.volume <= 0 && water.visible) water.visible = false;
+
+  if (state.scooping) {
+    const t = TOOLS[state.tool];
+    state.scoopT += dt;
+    const k = Math.min(1, state.scoopT / t.time);
+    const dip = Math.sin(k * Math.PI);
+    toolGroup.position.y = -0.34 - dip * 0.22;
+    toolGroup.rotation.x = -dip * 0.9;
+    ui.progress.style.display = 'block';
+    ui.progressFill.style.width = (k * 100) + '%';
+    if (k >= 1) {
+      finishScoop();
+      ui.progress.style.display = 'none';
+      toolGroup.position.y = -0.34;
+      toolGroup.rotation.x = 0;
+    }
+  } else {
+    ui.progress.style.display = 'none';
+    toolGroup.position.y = -0.34 + Math.sin(clock.elapsedTime * 2) * 0.008;
+  }
+
+  seller.position.y = Math.sin(clock.elapsedTime * 1.6) * 0.03;
+  updatePumps(dt);
+  updateHUD();
+  updatePrompt();
+  renderer.render(scene, camera);
+}
+updateToolVisibility();
+animate();
+</script>
+</body>
+</html>
