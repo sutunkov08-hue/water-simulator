@@ -105,6 +105,7 @@
     E — продать / магазин &nbsp;|&nbsp; B — магазин &nbsp;|&nbsp; Пробел — выбраться из бассейна &nbsp;|&nbsp; Ctrl — нырнуть<br>
     1 — ложка &nbsp; 2 — стакан &nbsp; 3 — таз &nbsp; 4 — канистра
   </div>
+  <div style="margin-top:8px;font-size:12px;color:#7fa8c9;">версия игры: <b id="verMark">v8</b> — для игры по сети у всех должна быть одинаковая версия (Ctrl+Shift+R — обновить)</div>
 </div>
 
 <div id="paused">Пауза — кликни, чтобы продолжить</div>
@@ -1287,6 +1288,7 @@ function npcSay(npc, lines, chance) {
   speech = { npc, until: clock.elapsedTime + 2.8 };
 }
 
+const NET_VERSION = 8;
 const NET = {
   id: Math.random().toString(36).slice(2, 9),
   name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
@@ -1307,7 +1309,7 @@ function netPublish(topic, obj, qos = 0) {
   for (const c of NET.conns) { try { c.publish(topic, payload, { qos }); } catch {} }
 }
 function netSendState() {
-  netPublish(TOPIC('room/' + NET.code), { type: 'state', players: NET.players, mode: NET.mode, started: NET.started, private: NET.private }, 1);
+  netPublish(TOPIC('room/' + NET.code), { type: 'state', v: NET_VERSION, players: NET.players, mode: NET.mode, started: NET.started, private: NET.private, vol: state.volume }, 1);
 }
 
 const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
@@ -1380,10 +1382,11 @@ function onNetMessage(topic, payload) {
           clearTimeout(NET.joinWaitTimer);
           clearInterval(NET.joinRetry);
           if (m.started && NET.screen === 'joining') {
+            if (m.v !== NET_VERSION) { netStatus('netStatusJoin', 'У хоста другая версия — обновите страницу (Ctrl+Shift+R)'); break; }
             NET.started = true;
             hideNetScreens();
             startGame(m.mode);
-            if (typeof m.v === 'number') state.volume = m.v;
+            if (typeof m.vol === 'number') state.volume = m.vol;
           } else {
             if (NET.screen === 'joining') showNetScreen('netLobby');
             if (NET.screen === 'netLobby') renderLobby();
@@ -1393,12 +1396,16 @@ function onNetMessage(topic, payload) {
       break;
     case 'join':
       if (NET.isHost) {
+        if (m.v !== NET_VERSION) {
+          netPublish(TOPIC('room/' + NET.code), { type: 'verErr', v: NET_VERSION }, 1);
+          break;
+        }
         if (!NET.players.some(p => p.id === m.id)) {
           NET.players.push({ id: m.id, name: m.name });
           if (!NET.started) renderLobby();
         }
         netSendState();
-        if (NET.started) netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode, v: state.volume }, 1);
+        if (NET.started) netPublish(TOPIC('room/' + NET.code), { type: 'start', v: NET_VERSION, mode: NET.mode, vol: state.volume }, 1);
       }
       break;
     case 'leave':
@@ -1407,11 +1414,19 @@ function onNetMessage(topic, payload) {
         renderLobby(); netSendState();
       } else removeRemote(m.id);
       break;
+    case 'verErr':
+      if (!NET.isHost) {
+        clearInterval(NET.joinRetry);
+        netStatus('netStatusJoin', 'У хоста другая версия игры — ОБА обновите страницу (Ctrl+Shift+R) и попробуйте снова');
+        NET.code = null;
+      }
+      break;
     case 'start':
       if (!NET.isHost && !NET.started) {
+        if (m.v !== NET_VERSION) { netStatus('netStatusJoin', 'У хоста другая версия — обновите страницу (Ctrl+Shift+R)'); break; }
         NET.started = true; clearInterval(NET.joinRetry); hideNetScreens();
         startGame(m.mode);
-        if (typeof m.v === 'number') state.volume = m.v;
+        if (typeof m.vol === 'number') state.volume = m.vol;
       }
       break;
     case 'pos': updateRemote(m); break;
@@ -1461,7 +1476,7 @@ function createServer(name, priv) {
     NET.hbTimer = setInterval(() => {
       if (NET.started) return;
       netSendState();
-      if (!priv) netPublish(TOPIC('lobby'), { code: NET.code, name, players: NET.players.length, mode: NET.mode, started: false, ts: Date.now() });
+      if (!priv) netPublish(TOPIC('lobby'), { code: NET.code, name, players: NET.players.length, mode: NET.mode, started: false, v: NET_VERSION, ts: Date.now() });
     }, 2500);
   }, 'netStatusCreate');
 }
@@ -1474,7 +1489,7 @@ function joinServer(code) {
     NET.screen = 'joining';
     netStatus('netStatusJoin', 'Подключение…');
     clearInterval(NET.joinRetry);
-    const sendJoin = () => netPublish(TOPIC('room/' + NET.code), { type: 'join', id: NET.id, name: NET.name }, 1);
+    const sendJoin = () => netPublish(TOPIC('room/' + NET.code), { type: 'join', v: NET_VERSION, id: NET.id, name: NET.name }, 1);
     sendJoin();
     NET.joinRetry = setInterval(() => {
       if (NET.screen === 'joining') sendJoin();
@@ -1528,7 +1543,7 @@ function renderServerList() {
   for (const [k, v] of publicServers) if (now - v.ts > 12000) publicServers.delete(k);
   const list = [...publicServers.values()];
   const html = list.length
-    ? list.map(v => `<div class="srv"><span>${v.name} · ${MODES[v.mode] ? MODES[v.mode].name : v.mode} · 👥 ${v.players}</span><button data-code="${v.code}">Войти</button></div>`).join('')
+    ? list.map(v => `<div class="srv"><span>${v.name} · ${MODES[v.mode] ? MODES[v.mode].name : v.mode} · 👥 ${v.players}${v.v !== NET_VERSION ? ' · <b style="color:#ffb84d;">⚠ старая версия</b>' : ''}</span><button data-code="${v.code}">Войти</button></div>`).join('')
     : '<div class="sub">Пока нет открытых серверов — создай свой!</div>';
   if (el.dataset.html === html) return;
   el.dataset.html = html;
@@ -1583,7 +1598,7 @@ document.getElementById('modeSel').addEventListener('change', e => { if (NET.isH
 document.getElementById('startSrvBtn').addEventListener('click', () => {
   if (!NET.isHost) return;
   NET.started = true;
-  netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode, v: state.volume }, 1);
+  netPublish(TOPIC('room/' + NET.code), { type: 'start', v: NET_VERSION, mode: NET.mode, vol: state.volume }, 1);
   clearInterval(NET.hbTimer);
   hideNetScreens();
   startGame(NET.mode);
