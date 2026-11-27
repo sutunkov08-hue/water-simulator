@@ -1162,6 +1162,7 @@ document.addEventListener('mousedown', e => {
 });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
+  if (!locked) for (const k in keys) keys[k] = false;
   if (!locked && !state.shopOpen && !state.inMenu && !state.won) ui.paused.style.display = 'flex';
   if (locked) ui.paused.style.display = 'none';
 });
@@ -1400,7 +1401,14 @@ function startGame(modeKey) {
   ui.shop.style.display = 'none';
   updateToolVisibility();
   toast(`Режим: ${W.name}. Зачерпни воду ложкой и продай скупщику!`, 3500);
-  renderer.domElement.requestPointerLock();
+  const lockReq = renderer.domElement.requestPointerLock();
+  if (lockReq && lockReq.catch) lockReq.catch(() => {});
+  setTimeout(() => {
+    if (!locked && !state.inMenu && !state.shopOpen && !state.won) {
+      ui.paused.style.display = 'flex';
+      toast('Кликни по экрану, чтобы взять управление', 4000);
+    }
+  }, 450);
 }
 
 function showMenu() {
