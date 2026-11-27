@@ -165,6 +165,10 @@
       <div class="sub" id="lobbyPlayers"></div>
       <div class="sub" id="lobbyPrivate" style="color:#9fc3e8;"></div>
     </div>
+    <div class="netRow" id="inviteRow">
+      <input type="text" id="inviteLink" readonly style="width:280px;font-size:13px;">
+      <button class="netBtn" id="copyInviteBtn">📋 Копировать ссылку</button>
+    </div>
     <div class="netRow">
       <button class="netBtn" id="startSrvBtn" style="background:#7CFC98;color:#04263f;">▶ Начать игру</button>
       <button class="netBtn" id="lobbyLeaveBtn">Покинуть</button>
@@ -1286,7 +1290,7 @@ function npcSay(npc, lines, chance) {
 const NET = {
   id: Math.random().toString(36).slice(2, 9),
   name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
-  client: null, connected: false, code: null, isHost: false,
+  client: null, connected: false, connecting: false, pending: [], code: null, isHost: false,
   players: [], started: false, private: false, mode: 'standard',
   screen: null, posTimer: 0, hbTimer: null, joinWaitTimer: null
 };
@@ -1296,31 +1300,64 @@ const TOPIC = t => 'watersim/v1/' + t;
 const publicServers = new Map();
 
 function netStatus(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
-function netPublish(topic, obj) { if (NET.client && NET.connected) { try { NET.client.publish(topic, JSON.stringify(obj)); } catch {} } }
+function netPublish(topic, obj, qos = 0) { if (NET.client && NET.connected) { try { NET.client.publish(topic, JSON.stringify(obj), { qos }); } catch {} } }
 function netSendState() {
-  netPublish(TOPIC('room/' + NET.code), { type: 'state', players: NET.players, mode: NET.mode, started: NET.started, private: NET.private });
+  netPublish(TOPIC('room/' + NET.code), { type: 'state', players: NET.players, mode: NET.mode, started: NET.started, private: NET.private }, 1);
 }
 
+const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 function netConnect(onReady, statusId) {
   if (typeof mqtt === 'undefined') { netStatus(statusId, 'Сетевая библиотека не загрузилась (проверь интернет)'); return; }
-  if (NET.connected && NET.client) { onReady(); return; }
-  netStatus(statusId, 'Подключение к серверу-ретранслятору…');
-  const c = mqtt.connect('wss://broker.emqx.io:8084/mqtt', { clientId: 'wsim_' + NET.id, connectTimeout: 9000, reconnectPeriod: 0, keepalive: 30 });
-  c.on('connect', () => {
-    NET.client = c; NET.connected = true;
-    c.subscribe(TOPIC('lobby'));
-    netStatus(statusId, '');
-    onReady();
-  });
-  c.on('message', onNetMessage);
-  c.on('error', () => netStatus(statusId, 'Ошибка подключения — попробуй ещё раз'));
-  c.on('close', () => { if (NET.client === c) NET.connected = false; });
+  if (NET.connected && NET.client) { if (onReady) onReady(); return; }
+  if (NET.connecting) { if (onReady) NET.pending.push(onReady); return; }
+  NET.connecting = true;
+  netStatus(statusId, 'Подключение…');
+  let bi = 0;
+  const tryBroker = () => {
+    if (NET.connected) return;
+    if (bi >= BROKERS.length) {
+      NET.connecting = false; NET.pending = [];
+      netStatus(statusId, 'Не удалось подключиться — проверь интернет и попробуй ещё раз');
+      return;
+    }
+    const url = BROKERS[bi++];
+    let c;
+    try { c = mqtt.connect(url, { clientId: 'wsim_' + NET.id + Math.random().toString(36).slice(2, 6), connectTimeout: 8000, reconnectPeriod: 0, keepalive: 30, clean: true }); }
+    catch { tryBroker(); return; }
+    let settled = false;
+    c.on('connect', () => {
+      if (settled) { try { c.end(true); } catch {} return; }
+      settled = true;
+      NET.client = c; NET.connected = true; NET.connecting = false;
+      c.subscribe(TOPIC('lobby'));
+      netStatus(statusId, '');
+      const pend = NET.pending; NET.pending = [];
+      if (onReady) onReady();
+      for (const f of pend) f();
+    });
+    c.on('message', onNetMessage);
+    c.on('error', () => {});
+    c.on('close', () => {
+      if (NET.client === c) { NET.connected = false; NET.client = null; }
+      if (!settled) tryBroker();
+      else if (NET.code && !NET.connecting) {
+        const code = NET.code, host = NET.isHost;
+        netConnect(() => {
+          NET.client.subscribe(TOPIC('room/' + code));
+          if (host) netSendState();
+          else netPublish(TOPIC('room/' + code), { type: 'join', id: NET.id, name: NET.name }, 1);
+        });
+      }
+    });
+  };
+  tryBroker();
 }
 
 function onNetMessage(topic, payload) {
   let m; try { m = JSON.parse(payload.toString()); } catch { return; }
   if (topic === TOPIC('lobby')) {
-    if (m.code && !m.private && !m.started && !m.gone) { publicServers.set(m.code, m); renderServerList(); }
+    if (m.gone && m.code) { publicServers.delete(m.code); renderServerList(); return; }
+    if (m.code && !m.private && !m.started) { publicServers.set(m.code, m); renderServerList(); }
     return;
   }
   if (topic !== TOPIC('room/' + NET.code)) return;
@@ -1397,7 +1434,9 @@ function createServer(name, priv) {
     renderLobby();
     clearInterval(NET.hbTimer);
     NET.hbTimer = setInterval(() => {
-      if (!priv && !NET.started) netPublish(TOPIC('lobby'), { code: NET.code, name, players: NET.players.length, mode: NET.mode, started: false, ts: Date.now() });
+      if (NET.started) return;
+      netSendState();
+      if (!priv) netPublish(TOPIC('lobby'), { code: NET.code, name, players: NET.players.length, mode: NET.mode, started: false, ts: Date.now() });
     }, 2500);
   }, 'netStatusCreate');
 }
@@ -1407,7 +1446,7 @@ function joinServer(code) {
     NET.code = code.toUpperCase().trim(); NET.isHost = false;
     NET.client.subscribe(TOPIC('room/' + NET.code));
     NET.screen = 'joining';
-    netPublish(TOPIC('room/' + NET.code), { type: 'join', id: NET.id, name: NET.name });
+    netPublish(TOPIC('room/' + NET.code), { type: 'join', id: NET.id, name: NET.name }, 1);
     netStatus('netStatusJoin', 'Подключение…');
     clearTimeout(NET.joinWaitTimer);
     NET.joinWaitTimer = setTimeout(() => { if (NET.screen === 'joining') { netStatus('netStatusJoin', 'Сервер не найден или игра уже началась'); leaveNet(); } }, 6000);
@@ -1415,7 +1454,10 @@ function joinServer(code) {
 }
 
 function leaveNet() {
-  if (NET.code) netPublish(TOPIC('room/' + NET.code), { type: 'leave', id: NET.id });
+  if (NET.code) {
+    netPublish(TOPIC('room/' + NET.code), { type: 'leave', id: NET.id }, 1);
+    if (NET.isHost && !NET.private) netPublish(TOPIC('lobby'), { code: NET.code, gone: true });
+  }
   clearInterval(NET.hbTimer); clearTimeout(NET.joinWaitTimer);
   for (const id of Object.keys(remoteHumans)) removeRemote(id);
   publicServers.clear();
@@ -1427,6 +1469,8 @@ function renderLobby() {
   document.getElementById('lobbyCode').textContent = NET.code;
   document.getElementById('lobbyPlayers').textContent = 'Игроки: ' + NET.players.map(p => p.name + (p.id === NET.id ? ' (ты)' : '')).join(', ');
   document.getElementById('lobbyPrivate').textContent = NET.private ? '🔒 Приватный — вход только по коду' : '🌍 Открытый — виден в списке серверов';
+  document.getElementById('inviteRow').style.display = NET.isHost ? '' : 'none';
+  if (NET.isHost) document.getElementById('inviteLink').value = location.href.split(/[?#]/)[0] + '?join=' + NET.code;
   const sel = document.getElementById('modeSel');
   const guestLabel = document.getElementById('lobbyModeGuest');
   if (NET.isHost) {
@@ -1479,11 +1523,27 @@ document.getElementById('joinGoBtn').addEventListener('click', () => {
   joinServer(code);
 });
 document.getElementById('lobbyLeaveBtn').addEventListener('click', () => { leaveNet(); hideNetScreens(); });
+document.getElementById('copyInviteBtn').addEventListener('click', () => {
+  const inp = document.getElementById('inviteLink');
+  const done = ok => netStatus('netStatusLobby', ok ? 'Ссылка скопирована — отправь её друзьям!' : 'Скопируй ссылку вручную (выдели и Ctrl+C)');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(inp.value).then(() => done(true), () => { inp.select(); done(document.execCommand('copy')); });
+  else { inp.select(); done(document.execCommand('copy')); }
+});
+
+{
+  const joinParam = (new URLSearchParams(location.search)).get('join');
+  if (joinParam && joinParam.trim().length >= 4) {
+    const code = joinParam.trim().toUpperCase();
+    showNetScreen('netJoin');
+    document.getElementById('joinCode').value = code;
+    netConnect(() => joinServer(code), 'netStatusJoin');
+  }
+}
 document.getElementById('modeSel').addEventListener('change', e => { if (NET.isHost) { NET.mode = e.target.value; renderLobby(); netSendState(); } });
 document.getElementById('startSrvBtn').addEventListener('click', () => {
   if (!NET.isHost) return;
   NET.started = true;
-  netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode });
+  netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode }, 1);
   clearInterval(NET.hbTimer);
   hideNetScreens();
   startGame(NET.mode);
