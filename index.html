@@ -1454,7 +1454,7 @@ function npcSay(npc, lines, chance) {
   speech = { npc, until: clock.elapsedTime + 2.8 };
 }
 
-const NET_VERSION = 9;
+const NET_VERSION = 10;
 const NET = {
   id: Math.random().toString(36).slice(2, 9),
   name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
@@ -1543,7 +1543,7 @@ function onNetMessage(topic, payload) {
   switch (m.type) {
     case 'state':
       if (!NET.isHost) {
-        NET.players = m.players; NET.mode = m.mode; NET.started = m.started; NET.private = m.private;
+        NET.players = m.players; NET.mode = m.mode; NET.hostStarted = m.started; NET.private = m.private;
         if (m.players.some(p => p.id === NET.id)) {
           clearTimeout(NET.joinWaitTimer);
           clearInterval(NET.joinRetry);
