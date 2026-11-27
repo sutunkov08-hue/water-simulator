@@ -1379,17 +1379,26 @@ function onNetMessage(topic, payload) {
         if (m.players.some(p => p.id === NET.id)) {
           clearTimeout(NET.joinWaitTimer);
           clearInterval(NET.joinRetry);
-          if (NET.screen === 'joining') showNetScreen('netLobby');
-          if (NET.screen === 'netLobby') renderLobby();
+          if (m.started && NET.screen === 'joining') {
+            NET.started = true;
+            hideNetScreens();
+            startGame(m.mode);
+            if (typeof m.v === 'number') state.volume = m.v;
+          } else {
+            if (NET.screen === 'joining') showNetScreen('netLobby');
+            if (NET.screen === 'netLobby') renderLobby();
+          }
         } else if (NET.screen === 'joining') netStatus('netStatusJoin', 'Подключение…');
       }
       break;
     case 'join':
-      if (NET.isHost && !NET.started) {
+      if (NET.isHost) {
         if (!NET.players.some(p => p.id === m.id)) {
           NET.players.push({ id: m.id, name: m.name });
-          renderLobby(); netSendState();
-        } else netSendState();
+          if (!NET.started) renderLobby();
+        }
+        netSendState();
+        if (NET.started) netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode, v: state.volume }, 1);
       }
       break;
     case 'leave':
@@ -1399,7 +1408,11 @@ function onNetMessage(topic, payload) {
       } else removeRemote(m.id);
       break;
     case 'start':
-      if (!NET.isHost && !NET.started) { NET.started = true; clearInterval(NET.joinRetry); hideNetScreens(); startGame(m.mode); }
+      if (!NET.isHost && !NET.started) {
+        NET.started = true; clearInterval(NET.joinRetry); hideNetScreens();
+        startGame(m.mode);
+        if (typeof m.v === 'number') state.volume = m.v;
+      }
       break;
     case 'pos': updateRemote(m); break;
     case 'scoop':
@@ -1514,10 +1527,17 @@ function renderServerList() {
   const now = Date.now();
   for (const [k, v] of publicServers) if (now - v.ts > 12000) publicServers.delete(k);
   const list = [...publicServers.values()];
-  if (!list.length) { el.innerHTML = '<div class="sub">Пока нет открытых серверов — создай свой!</div>'; return; }
-  el.innerHTML = list.map(v => `<div class="srv"><span>${v.name} · ${MODES[v.mode] ? MODES[v.mode].name : v.mode} · 👥 ${v.players}</span><button data-code="${v.code}">Войти</button></div>`).join('');
-  el.querySelectorAll('button[data-code]').forEach(b => b.addEventListener('click', () => joinServer(b.dataset.code)));
+  const html = list.length
+    ? list.map(v => `<div class="srv"><span>${v.name} · ${MODES[v.mode] ? MODES[v.mode].name : v.mode} · 👥 ${v.players}</span><button data-code="${v.code}">Войти</button></div>`).join('')
+    : '<div class="sub">Пока нет открытых серверов — создай свой!</div>';
+  if (el.dataset.html === html) return;
+  el.dataset.html = html;
+  el.innerHTML = html;
 }
+document.getElementById('serverList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-code]');
+  if (b) joinServer(b.dataset.code);
+});
 
 function showNetScreen(name) {
   NET.screen = name;
@@ -1563,7 +1583,7 @@ document.getElementById('modeSel').addEventListener('change', e => { if (NET.isH
 document.getElementById('startSrvBtn').addEventListener('click', () => {
   if (!NET.isHost) return;
   NET.started = true;
-  netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode }, 1);
+  netPublish(TOPIC('room/' + NET.code), { type: 'start', mode: NET.mode, v: state.volume }, 1);
   clearInterval(NET.hbTimer);
   hideNetScreens();
   startGame(NET.mode);
