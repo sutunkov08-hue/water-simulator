@@ -1290,7 +1290,7 @@ function npcSay(npc, lines, chance) {
 const NET = {
   id: Math.random().toString(36).slice(2, 9),
   name: 'Игрок ' + (10 + Math.floor(Math.random() * 90)),
-  client: null, connected: false, connecting: false, pending: [], code: null, isHost: false,
+  client: null, connected: false, ready: false, connecting: false, pending: [], conns: [], roomSub: null, code: null, isHost: false,
   players: [], started: false, private: false, mode: 'standard',
   screen: null, posTimer: 0, hbTimer: null, joinWaitTimer: null
 };
@@ -1300,61 +1300,72 @@ const TOPIC = t => 'watersim/v1/' + t;
 const publicServers = new Map();
 
 function netStatus(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
-function netPublish(topic, obj, qos = 0) { if (NET.client && NET.connected) { try { NET.client.publish(topic, JSON.stringify(obj), { qos }); } catch {} } }
+const seenMsgs = new Set();
+function netPublish(topic, obj, qos = 0) {
+  if (!NET.connected || !NET.conns.length) return;
+  const payload = JSON.stringify({ ...obj, mid: Math.random().toString(36).slice(2, 12) });
+  for (const c of NET.conns) { try { c.publish(topic, payload, { qos }); } catch {} }
+}
 function netSendState() {
   netPublish(TOPIC('room/' + NET.code), { type: 'state', players: NET.players, mode: NET.mode, started: NET.started, private: NET.private }, 1);
 }
 
-const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
 function netConnect(onReady, statusId) {
   if (typeof mqtt === 'undefined') { netStatus(statusId, 'Сетевая библиотека не загрузилась (проверь интернет)'); return; }
-  if (NET.connected && NET.client) { if (onReady) onReady(); return; }
-  if (NET.connecting) { if (onReady) NET.pending.push(onReady); return; }
+  if (NET.connected && NET.conns.length) { if (onReady) onReady(); return; }
+  if (onReady) NET.pending.push(onReady);
+  if (NET.connecting) return;
   NET.connecting = true;
   netStatus(statusId, 'Подключение…');
-  let bi = 0;
-  const tryBroker = () => {
-    if (NET.connected) return;
-    if (bi >= BROKERS.length) {
-      NET.connecting = false; NET.pending = [];
-      netStatus(statusId, 'Не удалось подключиться — проверь интернет и попробуй ещё раз');
-      return;
-    }
-    const url = BROKERS[bi++];
+  let upCount = 0;
+  const connected = () => {
+    upCount++;
+    if (NET.ready) return;
+    NET.ready = true; NET.connected = true; NET.connecting = false;
+    netStatus(statusId, '');
+    const pend = NET.pending; NET.pending = [];
+    for (const f of pend) f();
+  };
+  for (const url of BROKERS) {
     let c;
     try { c = mqtt.connect(url, { clientId: 'wsim_' + NET.id + Math.random().toString(36).slice(2, 6), connectTimeout: 8000, reconnectPeriod: 0, keepalive: 30, clean: true }); }
-    catch { tryBroker(); return; }
-    let settled = false;
+    catch { continue; }
     c.on('connect', () => {
-      if (settled) { try { c.end(true); } catch {} return; }
-      settled = true;
-      NET.client = c; NET.connected = true; NET.connecting = false;
-      c.subscribe(TOPIC('lobby'));
-      netStatus(statusId, '');
-      const pend = NET.pending; NET.pending = [];
-      if (onReady) onReady();
-      for (const f of pend) f();
+      try {
+        c.subscribe(TOPIC('lobby'));
+        if (NET.roomSub) c.subscribe(TOPIC('room/' + NET.roomSub));
+      } catch {}
+      if (!NET.conns.includes(c)) NET.conns.push(c);
+      connected();
     });
     c.on('message', onNetMessage);
     c.on('error', () => {});
     c.on('close', () => {
-      if (NET.client === c) { NET.connected = false; NET.client = null; }
-      if (!settled) tryBroker();
-      else if (NET.code && !NET.connecting) {
-        const code = NET.code, host = NET.isHost;
-        netConnect(() => {
-          NET.client.subscribe(TOPIC('room/' + code));
-          if (host) netSendState();
-          else netPublish(TOPIC('room/' + code), { type: 'join', id: NET.id, name: NET.name }, 1);
-        });
+      NET.conns = NET.conns.filter(x => x !== c);
+      if (!NET.conns.length && NET.ready && !NET.connecting) {
+        NET.ready = false; NET.connected = false;
+        if (NET.code) netConnect(null, 'netStatusLobby');
       }
     });
-  };
-  tryBroker();
+  }
+  setTimeout(() => {
+    if (!NET.ready) {
+      NET.connecting = false; NET.pending = [];
+      for (const c of NET.conns) { try { c.end(true); } catch {} }
+      NET.conns = [];
+      netStatus(statusId, 'Не удалось подключиться — проверь интернет и попробуй ещё раз');
+    }
+  }, 14000);
 }
 
 function onNetMessage(topic, payload) {
   let m; try { m = JSON.parse(payload.toString()); } catch { return; }
+  if (m.mid) {
+    if (seenMsgs.has(m.mid)) return;
+    seenMsgs.add(m.mid);
+    if (seenMsgs.size > 600) { const it = seenMsgs.values().next(); seenMsgs.delete(it.value); }
+  }
   if (topic === TOPIC('lobby')) {
     if (m.gone && m.code) { publicServers.delete(m.code); renderServerList(); return; }
     if (m.code && !m.private && !m.started) { publicServers.set(m.code, m); renderServerList(); }
@@ -1365,12 +1376,12 @@ function onNetMessage(topic, payload) {
     case 'state':
       if (!NET.isHost) {
         NET.players = m.players; NET.mode = m.mode; NET.started = m.started; NET.private = m.private;
-        clearTimeout(NET.joinWaitTimer);
-        if (NET.screen === 'joining') {
-          if (m.players.some(p => p.id === NET.id)) showNetScreen('netLobby');
-          else netStatus('netStatusJoin', 'Подключение…');
-        }
-        if (NET.screen === 'netLobby') renderLobby();
+        if (m.players.some(p => p.id === NET.id)) {
+          clearTimeout(NET.joinWaitTimer);
+          clearInterval(NET.joinRetry);
+          if (NET.screen === 'joining') showNetScreen('netLobby');
+          if (NET.screen === 'netLobby') renderLobby();
+        } else if (NET.screen === 'joining') netStatus('netStatusJoin', 'Подключение…');
       }
       break;
     case 'join':
@@ -1388,7 +1399,7 @@ function onNetMessage(topic, payload) {
       } else removeRemote(m.id);
       break;
     case 'start':
-      if (!NET.isHost) { NET.started = true; hideNetScreens(); startGame(m.mode); }
+      if (!NET.isHost && !NET.started) { NET.started = true; clearInterval(NET.joinRetry); hideNetScreens(); startGame(m.mode); }
       break;
     case 'pos': updateRemote(m); break;
     case 'scoop':
@@ -1429,7 +1440,8 @@ function createServer(name, priv) {
     NET.code = Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
     NET.isHost = true; NET.private = priv; NET.started = false; NET.mode = 'standard';
     NET.players = [{ id: NET.id, name }];
-    NET.client.subscribe(TOPIC('room/' + NET.code));
+    NET.roomSub = NET.code;
+    for (const c of NET.conns) { try { c.subscribe(TOPIC('room/' + NET.code)); } catch {} }
     showNetScreen('netLobby');
     renderLobby();
     clearInterval(NET.hbTimer);
@@ -1444,12 +1456,19 @@ function createServer(name, priv) {
 function joinServer(code) {
   netConnect(() => {
     NET.code = code.toUpperCase().trim(); NET.isHost = false;
-    NET.client.subscribe(TOPIC('room/' + NET.code));
+    NET.roomSub = NET.code;
+    for (const c of NET.conns) { try { c.subscribe(TOPIC('room/' + NET.code)); } catch {} }
     NET.screen = 'joining';
-    netPublish(TOPIC('room/' + NET.code), { type: 'join', id: NET.id, name: NET.name }, 1);
     netStatus('netStatusJoin', 'Подключение…');
+    clearInterval(NET.joinRetry);
+    const sendJoin = () => netPublish(TOPIC('room/' + NET.code), { type: 'join', id: NET.id, name: NET.name }, 1);
+    sendJoin();
+    NET.joinRetry = setInterval(() => {
+      if (NET.screen === 'joining') sendJoin();
+      else clearInterval(NET.joinRetry);
+    }, 1500);
     clearTimeout(NET.joinWaitTimer);
-    NET.joinWaitTimer = setTimeout(() => { if (NET.screen === 'joining') { netStatus('netStatusJoin', 'Сервер не найден или игра уже началась'); leaveNet(); } }, 6000);
+    NET.joinWaitTimer = setTimeout(() => { if (NET.screen === 'joining') { netStatus('netStatusJoin', 'Сервер не найден или игра уже началась'); leaveNet(); } }, 12000);
   }, 'netStatusJoin');
 }
 
@@ -1458,11 +1477,12 @@ function leaveNet() {
     netPublish(TOPIC('room/' + NET.code), { type: 'leave', id: NET.id }, 1);
     if (NET.isHost && !NET.private) netPublish(TOPIC('lobby'), { code: NET.code, gone: true });
   }
-  clearInterval(NET.hbTimer); clearTimeout(NET.joinWaitTimer);
+  clearInterval(NET.hbTimer); clearTimeout(NET.joinWaitTimer); clearInterval(NET.joinRetry);
   for (const id of Object.keys(remoteHumans)) removeRemote(id);
   publicServers.clear();
-  NET.code = null; NET.isHost = false; NET.started = false; NET.players = []; NET.screen = null;
-  if (NET.client) { try { NET.client.end(true); } catch {} NET.client = null; NET.connected = false; }
+  NET.code = null; NET.isHost = false; NET.started = false; NET.players = []; NET.screen = null; NET.roomSub = null;
+  for (const c of NET.conns) { try { c.end(true); } catch {} }
+  NET.conns = []; NET.connected = false; NET.ready = false; NET.connecting = false;
 }
 
 function renderLobby() {
