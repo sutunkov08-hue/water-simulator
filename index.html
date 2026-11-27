@@ -20,6 +20,8 @@
   #progressWrap > div { height:100%; background:#6fd2ff; width:0%; }
   #toast { position:absolute; top:84px; left:50%; transform:translateX(-50%); font-size:16px; background:rgba(10,25,45,.88); border:1px solid rgba(255,255,255,.25); padding:10px 18px; border-radius:10px; opacity:0; transition:opacity .25s; max-width:72%; text-align:center; }
   #underwater { position:fixed; inset:0; background:rgba(18,70,130,.42); display:none; pointer-events:none; z-index:3; }
+  #speech { position:fixed; display:none; transform:translate(-50%,-100%); background:rgba(255,255,255,.95); color:#1d3a52; font-weight:600; font-size:14px; padding:7px 12px; border-radius:10px; box-shadow:0 3px 12px rgba(0,0,0,.35); pointer-events:none; z-index:4; white-space:nowrap; }
+  #speech::after { content:''; position:absolute; left:50%; top:100%; margin-left:-6px; border:6px solid transparent; border-top-color:rgba(255,255,255,.95); }
   #shop { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:470px; max-width:94vw; max-height:88vh; overflow-y:auto; background:rgba(8,20,38,.95); border:1px solid rgba(255,255,255,.25); border-radius:16px; padding:22px; color:#fff; display:none; z-index:5; }
   #shop h2 { text-align:center; margin-bottom:4px; }
   #shop .sub { text-align:center; color:#9fc3e8; font-size:13px; margin-bottom:14px; }
@@ -48,6 +50,7 @@
 </head>
 <body>
 <div id="underwater"></div>
+<div id="speech"></div>
 <div id="hud">
   <div id="stats" class="panel">
     <div class="money" id="money">$0</div>
@@ -67,14 +70,14 @@
 
 <div id="shop">
   <h2>🛒 Магазин</h2>
-  <div class="sub">Воду сдают скупщику на противоположной стороне бассейна.</div>
+  <div class="sub">Воду сдают скупщику в киоск «СКУПКА ВОДЫ» рядом со спавном.</div>
   <div id="shopItems"></div>
   <button id="shopClose">Закрыть (B)</button>
 </div>
 
 <div id="overlay">
   <h1>🌊 Осуши Бассейн</h1>
-  <p>Перед тобой бассейн, полный воды. Зачерпывай воду инструментом и относить её скупщику на противоположной стороне — он платит деньги. Покупай стакан, таз, канистру и насосы. В воде можно плавать и нырять (Ctrl)!</p>
+  <p>Перед тобой бассейн, полный воды. Зачерпывай воду инструментом и относить её скупщику в киоск «СКУПКА ВОДЫ» рядом со спавном — он платит деньги. Покупай стакан, таз, канистру и насосы. В воде можно плавать и нырять (Ctrl)!</p>
   <div class="modes">
     <button class="mode" data-mode="easy">🌱 Лёгкий<small>бассейн поменьше</small></button>
     <button class="mode" data-mode="standard">🏊 Стандартный<small>как в первой версии</small></button>
@@ -173,7 +176,7 @@ su.mieDirectionalG.value = 0.8;
 sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 42), THREE.MathUtils.degToRad(120));
 su.sunPosition.value.copy(sunDir);
 
-const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x8f8f8f, 1.15);
+const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x8f8f8f, 1.4);
 scene.add(hemi);
 const dir = new THREE.DirectionalLight(0xfff3d6, 2.2);
 dir.position.set(45, 60, 25);
@@ -300,12 +303,14 @@ function makeHuman({ shirt = 0x2e6da4, pants = 0x37404a, skin = 0xe8b98c, hair =
   head.position.y = 1.83;
   const eyeM = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
   const pupilM = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.3 });
+  const eyes = [];
   for (const sx of [1, -1]) {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), eyeM);
     eye.position.set(0.075 * sx, 0.03, 0.18);
     const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 6), pupilM);
     pupil.position.set(0.075 * sx, 0.03, 0.215);
     head.add(eye, pupil);
+    eyes.push(eye, pupil);
   }
   const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.016, 0.012), pupilM);
   mouth.position.set(0, -0.075, 0.195);
@@ -325,7 +330,7 @@ function makeHuman({ shirt = 0x2e6da4, pants = 0x37404a, skin = 0xe8b98c, hair =
   }
   for (const m of [legL, legR, shoeL, shoeR, torso, armL, armR, handL, handR, head]) m.castShadow = true;
   g.add(legL, legR, shoeL, shoeR, torso, armL, armR, handL, handR, head);
-  return { group: g, head };
+  return { group: g, head, eyes, blinkTimer: 1.5 + Math.random() * 4, blinkT: 0 };
 }
 
 const shopVendor = makeHuman({ shirt: 0x3f7d3f, pants: 0x2c3440, hair: 0x2a2a2a, hatColor: 0xd8b04a });
@@ -440,10 +445,18 @@ function buildWorld(modeKey) {
   poolGroup = new THREE.Group();
   const { hx, hz, depth } = W;
 
-  const deck = new THREE.Mesh(new THREE.BoxGeometry((hx + DECK_MARGIN) * 2 + 4, 0.4, (hz + DECK_MARGIN) * 2 + 4), concreteMat(0xb9c6cf));
-  deck.position.y = -0.2;
-  deck.receiveShadow = true;
-  poolGroup.add(deck);
+  const Dx = hx + DECK_MARGIN + 2, Dz = hz + DECK_MARGIN + 2;
+  const deckMat = concreteMat(0xb9c6cf);
+  function addDeckStrip(x, z, sx, sz) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(sx, 0.4, sz), deckMat);
+    s.position.set(x, -0.2, z);
+    s.receiveShadow = true;
+    poolGroup.add(s);
+  }
+  addDeckStrip(0, (hz + Dz) / 2, Dx * 2, Dz - hz);
+  addDeckStrip(0, -(hz + Dz) / 2, Dx * 2, Dz - hz);
+  addDeckStrip((hx + Dx) / 2, 0, Dx - hx, hz * 2);
+  addDeckStrip(-(hx + Dx) / 2, 0, Dx - hx, hz * 2);
 
   const hallH = 9;
   const dx2 = hx + DECK_MARGIN + 2, dz2 = hz + DECK_MARGIN + 2;
@@ -485,8 +498,8 @@ function buildWorld(modeKey) {
   addStrip(dx2 - 0.6, 0, 0.12, dz2 * 2 - 2);
   addStrip(-dx2 + 0.6, 0, 0.12, dz2 * 2 - 2);
   if (hx < 120) {
-    for (const [lx, lz] of [[-hx / 2, -hz / 2], [hx / 2, -hz / 2], [-hx / 2, hz / 2], [hx / 2, hz / 2]]) {
-      const pl = new THREE.PointLight(0xffffff, 120, 0, 2);
+    for (const [lx, lz] of [[-hx / 2, -hz / 2], [hx / 2, -hz / 2], [-hx / 2, hz / 2], [hx / 2, hz / 2], [0, 0]]) {
+      const pl = new THREE.PointLight(0xfff6e8, 340, 0, 2);
       pl.position.set(lx, hallH - 1.5, lz);
       poolGroup.add(pl);
     }
@@ -607,19 +620,25 @@ function buildTools() {
   const glass = new THREE.MeshStandardMaterial({ color: 0xcfe9f5, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.45, side: THREE.DoubleSide });
   const blue = new THREE.MeshStandardMaterial({ color: 0x2e86c1, roughness: 0.5, metalness: 0.15, side: THREE.DoubleSide });
   const plastic = new THREE.MeshStandardMaterial({ color: 0xd35400, roughness: 0.55, metalness: 0.1 });
-  const waterFill = new THREE.MeshStandardMaterial({ color: 0x4db2e8, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 });
+  const waterFill = new THREE.MeshPhysicalMaterial({ color: 0x8fd4f2, roughness: 0.05, metalness: 0, transmission: 0.7, thickness: 0.5, ior: 1.33, transparent: true, opacity: 0.92, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.6, side: THREE.DoubleSide });
 
   const spoon = new THREE.Group();
-  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.02, 0.42, 10), silver);
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.02, 0.44, 12), silver);
   handle.rotation.x = Math.PI / 2;
-  handle.position.z = -0.18;
-  const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.075, 18, 12), silver);
-  bowl.scale.set(1, 0.45, 1.3);
-  bowl.position.z = -0.42;
-  const spoonFill = new THREE.Mesh(new THREE.SphereGeometry(0.06, 14, 10), waterFill);
-  spoonFill.scale.set(1, 0.4, 1.2);
-  spoonFill.position.set(0, 0.015, -0.42);
-  spoon.add(handle, bowl, spoonFill);
+  handle.position.z = -0.17;
+  const neck = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.009, 8, 16), silver);
+  neck.position.set(0, 0, -0.36);
+  const bowlMat = silver.clone();
+  bowlMat.side = THREE.DoubleSide;
+  const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.075, 26, 16, 0, Math.PI * 2, Math.PI * 0.52, Math.PI * 0.48), bowlMat);
+  bowl.position.set(0, 0.02, -0.42);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.074, 0.008, 10, 28), silver);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.set(0, 0.0153, -0.42);
+  const spoonFill = new THREE.Mesh(new THREE.CircleGeometry(0.066, 26), waterFill);
+  spoonFill.rotation.x = -Math.PI / 2;
+  spoonFill.position.set(0, 0.002, -0.42);
+  spoon.add(handle, neck, bowl, rim, spoonFill);
   spoon.rotation.x = 0.35;
 
   const cup = new THREE.Group();
@@ -695,7 +714,8 @@ const ui = {
   paused: document.getElementById('paused'),
   win: document.getElementById('win'),
   winText: document.getElementById('winText'),
-  underwater: document.getElementById('underwater')
+  underwater: document.getElementById('underwater'),
+  speech: document.getElementById('speech')
 };
 
 let toastTimer = null;
@@ -783,7 +803,7 @@ function finishScoop() {
   spawnSplash(scoopPoint, 14, 2.2);
   splashSound(true);
   updateToolVisibility();
-  toast(`Зачерпнул ${t.name.toLowerCase()} воды! Неси скупщику на той стороне (+$${t.sell})`);
+  toast(`Зачерпнул ${t.name.toLowerCase()} воды! Неси скупщику в киоск «СКУПКА ВОДЫ» (+$${t.sell})`);
   if (state.volume <= 0 && !state.won) winGame();
 }
 
@@ -793,6 +813,7 @@ function sellWater() {
   state.totalSold += state.carried;
   toast(`Продано за $${state.carried}!`, 1500);
   state.carried = 0;
+  npcSay(waterBuyer, BUYER_LINES, 0.55);
   sellSound();
   updateToolVisibility();
 }
@@ -857,6 +878,7 @@ function buy(key) {
     state.owned[key] = true;
     equip(key);
     toast(`Куплен ${t.name.toLowerCase()}! Продажа воды: $${t.sell} за раз.`);
+    npcSay(shopVendor, VENDOR_LINES, 0.7);
     buySound();
   }
   renderShop();
@@ -1154,6 +1176,15 @@ function winGame() {
   document.exitPointerLock();
 }
 
+const VENDOR_LINES = ['Спасибо, я верю в тебя!', 'Отличный выбор!', 'С этим дело пойдёт быстрее!', 'Приходи ещё!'];
+const BUYER_LINES = ['Спасибо за воду!', 'Думаю, ты сможешь осушить весь бассейн!', 'Отличная вода!', 'Хорошая работа, продолжай!'];
+let speech = { npc: null, until: 0 };
+function npcSay(npc, lines, chance) {
+  if (Math.random() > chance) return;
+  ui.speech.textContent = lines[Math.floor(Math.random() * lines.length)];
+  speech = { npc, until: clock.elapsedTime + 2.8 };
+}
+
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
@@ -1205,7 +1236,25 @@ function animate() {
   for (const npc of [shopVendor, waterBuyer]) {
     if (npc.group.position.distanceTo(player.pos) < 12) npc.head.lookAt(camera.position);
     else npc.head.rotation.set(0, 0, 0);
+    npc.blinkTimer -= dt;
+    if (npc.blinkTimer <= 0) {
+      npc.blinkT = 0.14;
+      npc.blinkTimer = 2 + Math.random() * 4;
+    }
+    if (npc.blinkT > 0) {
+      npc.blinkT -= dt;
+      const s = npc.blinkT > 0 ? 0.08 : 1;
+      for (const e of npc.eyes) e.scale.y = s;
+    }
   }
+  if (speech.until > t && !state.inMenu && !state.shopOpen && speech.npc) {
+    const v = speech.npc.head.getWorldPosition(new THREE.Vector3()).project(camera);
+    if (v.z < 1) {
+      ui.speech.style.display = 'block';
+      ui.speech.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px';
+      ui.speech.style.top = ((-v.y * 0.5 + 0.5) * innerHeight - 26) + 'px';
+    } else ui.speech.style.display = 'none';
+  } else ui.speech.style.display = 'none';
 
   updatePumps(dt);
   updateParticles(dt);
