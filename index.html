@@ -195,18 +195,20 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const TOOLS = {
-  spoon:    { key:'1', name:'Ложка',    price:0,   sell:1,  vol:0.25, time:1.5, desc:'Почти не влияет на уровень, но за $1 за раз.' },
-  cup:      { key:'2', name:'Стакан',   price:20,  sell:5,  vol:4,    time:1.1, desc:'Заметно больше воды. Продажа: $5.' },
-  basin:    { key:'3', name:'Таз',      price:50,  sell:15, vol:15,   time:1.4, desc:'Черпает много. Продажа: $15.' },
-  canister: { key:'4', name:'Канистра', price:200, sell:30, vol:50,   time:1.8, desc:'Огромная ёмкость. Продажа: $30.' }
+  spoon:    { key:'1', name:'Ложка',    price:0,     sell:1,   vol:0.25, time:1.5, desc:'Почти не влияет на уровень, но за $1 за раз.' },
+  cup:      { key:'2', name:'Стакан',   price:20,    sell:3,   vol:4,    time:1.1, desc:'Заметно больше воды. Продажа: $3.' },
+  basin:    { key:'3', name:'Таз',      price:100,   sell:15,  vol:15,   time:1.4, desc:'Черпает много. Продажа: $15.' },
+  canister: { key:'4', name:'Канистра', price:500,   sell:30,  vol:50,   time:1.8, desc:'Огромная ёмкость. Продажа: $30.' },
+  hose:     { key:'5', name:'Шланг',    price:15000, sell:100, vol:0.01, time:2.2, desc:'Большой насос: набирает 1% бассейна за раз. Продажа: $100.' }
 };
 const MODES = {
   easy:       { name:'Лёгкий',      hx:12,  hz:8,    depth:2.0, volume:250 },
   standard:   { name:'Стандартный', hx:20,  hz:12.5, depth:2.5, volume:1000 },
   hard:       { name:'Сложный',     hx:32,  hz:20,   depth:3.0, volume:3000 },
-  impossible: { name:'Невозможный', hx:250, hz:150,  depth:4.0, volume:200000 }
+  impossible: { name:'Невозможный', hx:250, hz:150,  depth:6.0, volume:200000 }
 };
-const PUMP_PRICE = 30, PUMP_INCOME = 3, MAX_PUMPS = 8, PUMP_MAX_LEVEL = 5;
+const PUMP_PRICE = 30, MAX_PUMPS = 8, PUMP_MAX_LEVEL = 4;
+const PUMP_INCOMES = [3, 6, 10, 15];
 const PUMP_PERIODS = [8, 6, 4.5, 3, 2];
 const PUMP_UPGRADE_BASE = 50;
 const DECK_MARGIN = 12;
@@ -216,8 +218,9 @@ const state = {
   mode: 'standard',
   money: 0,
   tool: 'spoon',
-  owned: { spoon:true, cup:false, basin:false, canister:false },
+  owned: { spoon:true, cup:false, basin:false, canister:false, hose:false },
   carried: 0,
+  carriedTool: null,
   volume: 1000,
   scooping: false,
   scoopT: 0,
@@ -631,9 +634,10 @@ function buildWorld(modeKey) {
     sunDirection: sunDir.clone(),
     sunColor: 0xffffff,
     waterColor: 0x0e6191,
-    distortionScale: 2.6,
+    distortionScale: 1.1,
     fog: false
   });
+  water.material.uniforms.size.value = 5;
   water.rotation.x = -Math.PI / 2;
   water.position.y = -0.25;
   poolGroup.add(water);
@@ -763,14 +767,27 @@ function buildTools() {
   canFill.position.y = -0.03;
   canister.add(canBody, canCap, canHandle, canFill);
 
+  const hose = new THREE.Group();
+  const hoseNozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.048, 0.24, 12), silver);
+  hoseNozzle.rotation.x = Math.PI / 2.4;
+  hoseNozzle.position.set(0, -0.02, -0.05);
+  const hoseRing = new THREE.Mesh(new THREE.TorusGeometry(0.032, 0.008, 8, 14), silver);
+  hoseRing.position.set(0, -0.02, 0.06);
+  const hoseFill = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.03, 0.17, 10), waterFill);
+  hoseFill.rotation.x = Math.PI / 2.4;
+  hoseFill.position.set(0, -0.02, -0.06);
+  hose.add(hoseNozzle, hoseRing, hoseFill);
+
   toolModels.spoon = spoon;
   toolModels.cup = cup;
   toolModels.basin = basin;
   toolModels.canister = canister;
+  toolModels.hose = hose;
   fillMeshes.spoon = spoonFill;
   fillMeshes.cup = cupFill;
   fillMeshes.basin = basinFill;
   fillMeshes.canister = canFill;
+  fillMeshes.hose = hoseFill;
   for (const k of Object.keys(toolModels)) {
     toolModels[k].visible = false;
     toolGroup.add(toolModels[k]);
@@ -778,6 +795,94 @@ function buildTools() {
   for (const k of Object.keys(fillMeshes)) fillMeshes[k].userData.base = fillMeshes[k].scale.clone();
 }
 buildTools();
+
+let hoseState = null;
+const HOSE_SEG_LEN = 0.42;
+const BIGPUMP_PRICE = 15000;
+
+function installBigPump() {
+  const grp = new THREE.Group();
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 1.5, 20), new THREE.MeshStandardMaterial({ color: 0xd35400, roughness: 0.5 }));
+  tank.position.y = 0.75;
+  tank.castShadow = true;
+  const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.64, 0.64, 0.12, 20), new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.5 }));
+  lid.position.y = 1.56;
+  const valveM = new THREE.MeshStandardMaterial({ color: 0xb9c2c9, roughness: 0.3, metalness: 0.7 });
+  const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.24, 10), valveM);
+  valve.rotation.z = Math.PI / 2;
+  valve.position.set(0.72, 1.15, 0);
+  grp.add(tank, lid, valve);
+  grp.position.set(W.hx * 0.6, 0, W.hz + 2.6);
+  scene.add(grp);
+  obstacles.push({ pos: grp.position.clone(), r: 0.95 });
+
+  const valveWorld = grp.localToWorld(new THREE.Vector3(0.72, 1.15, 0));
+  const pts = [], prev = [];
+  for (let i = 0; i < 16; i++) {
+    pts.push(new THREE.Vector3(valveWorld.x, Math.max(0.1, valveWorld.y - i * HOSE_SEG_LEN * 0.55), valveWorld.z + i * HOSE_SEG_LEN * 0.35));
+    prev.push(pts[i].clone());
+  }
+  const hoseMesh = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 36, 0.045, 8, false),
+    new THREE.MeshStandardMaterial({ color: 0x37474f, roughness: 0.55 })
+  );
+  hoseMesh.castShadow = true;
+  scene.add(hoseMesh);
+  const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.068, 0.32, 12), valveM);
+  nozzle.castShadow = true;
+  scene.add(nozzle);
+  hoseState = { group: grp, valveLocal: new THREE.Vector3(0.72, 1.15, 0), points: pts, prev, hose: hoseMesh, nozzle, held: true };
+  equip('hose');
+}
+
+function updateHose(dt) {
+  if (!hoseState) return;
+  const pts = hoseState.points, prev = hoseState.prev;
+  const valveWorld = hoseState.group.localToWorld(hoseState.valveLocal.clone());
+  pts[0].copy(valveWorld);
+  prev[0].copy(valveWorld);
+  const handPos = new THREE.Vector3(0.3, -0.32, -0.7).applyMatrix4(camera.matrixWorld);
+  for (let i = 1; i < pts.length; i++) {
+    if (hoseState.held && i === pts.length - 1) { pts[i].copy(handPos); prev[i].copy(handPos); continue; }
+    const vx = (pts[i].x - prev[i].x) * 0.97;
+    const vy = (pts[i].y - prev[i].y) * 0.97;
+    const vz = (pts[i].z - prev[i].z) * 0.97;
+    prev[i].copy(pts[i]);
+    pts[i].x += vx;
+    pts[i].y += vy - 9.8 * dt * dt;
+    pts[i].z += vz;
+  }
+  for (let iter = 0; iter < 4; iter++) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.0001;
+      const diff = (d - HOSE_SEG_LEN) / d;
+      const pinA = i === 0;
+      const pinB = hoseState.held && i + 1 === pts.length - 1;
+      if (!pinA && !pinB) {
+        const h = diff * 0.5;
+        a.x += dx * h; a.y += dy * h; a.z += dz * h;
+        b.x -= dx * h; b.y -= dy * h; b.z -= dz * h;
+      } else if (pinA && !pinB) {
+        b.x -= dx * diff; b.y -= dy * diff; b.z -= dz * diff;
+      } else if (!pinA && pinB) {
+        a.x += dx * diff; a.y += dy * diff; a.z += dz * diff;
+      }
+    }
+    for (let i = 1; i < pts.length; i++) {
+      if (hoseState.held && i === pts.length - 1) continue;
+      if (pts[i].y < 0.06) pts[i].y = 0.06;
+    }
+  }
+  hoseState.hose.geometry.dispose();
+  hoseState.hose.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 36, 0.045, 8, false);
+  hoseState.nozzle.visible = !hoseState.held;
+  if (!hoseState.held) {
+    hoseState.nozzle.position.copy(pts[pts.length - 1]);
+    hoseState.nozzle.lookAt(pts[pts.length - 2]);
+  }
+}
 
 const raycaster = new THREE.Raycaster();
 raycaster.far = 4.6;
@@ -862,6 +967,7 @@ function errorSound() { tone(160, 0.2, 'sawtooth', 0.08); }
 
 function equip(key) {
   if (!state.owned[key]) { toast(`${TOOLS[key].name} ещё не куплен — загляни в магазин (B)`); errorSound(); return; }
+  if (hoseState && hoseState.held && key !== 'hose') hoseState.held = false;
   state.tool = key;
   updateToolVisibility();
 }
@@ -893,9 +999,11 @@ function tryStartScoop() {
 function finishScoop() {
   const t = TOOLS[state.tool];
   state.scooping = false;
-  const taken = Math.min(t.vol * volScale(), state.volume);
+  const taken = state.tool === 'hose' ? Math.min(state.volume * 0.01, state.volume) : Math.min(t.vol * volScale(), state.volume);
   state.volume -= taken;
   state.carried = t.sell;
+  state.carriedTool = state.tool;
+  spawnRing(scoopPoint.x, scoopPoint.z);
   if (NET.connected && NET.code) {
     if (NET.isHost) netPublish(TOPIC('room/' + NET.code), { type: 'vol', v: state.volume });
     else netPublish(TOPIC('room/' + NET.code), { type: 'scoop', a: taken });
@@ -909,6 +1017,7 @@ function finishScoop() {
 
 function sellWater() {
   if (state.carried <= 0) { toast('У тебя нет воды, чтобы продать'); errorSound(); return; }
+  if (state.carriedTool === 'hose' && state.tool !== 'hose') { toast('Вода в шланге — возьми шланг в руки!'); errorSound(); return; }
   state.money += state.carried;
   state.totalSold += state.carried;
   toast(`Продано за $${state.carried}!`, 1500);
@@ -933,18 +1042,26 @@ function renderShop() {
   const canPump = state.money >= PUMP_PRICE;
   const period = PUMP_PERIODS[state.pumpLevel - 1].toFixed(1);
   html += `<div class="item">
-    <div class="info"><div class="name">Насос (${pumps.length}/${MAX_PUMPS})</div><div class="desc">Ставится у бассейна, труба качает воду. Даёт $${PUMP_INCOME} каждые ${period} сек.</div></div>
+    <div class="info"><div class="name">Насос (${pumps.length}/${MAX_PUMPS})</div><div class="desc">Ставится у бассейна, труба качает воду. Даёт $${PUMP_INCOMES[state.pumpLevel - 1]} каждые ${period} сек.</div></div>
     <button data-buy="pump" ${pumpFull || !canPump ? 'disabled' : ''}>$${PUMP_PRICE}</button>
   </div>`;
+  if (state.mode === 'hard' || state.mode === 'impossible') {
+    const bpOwned = !!hoseState;
+    const canBp = state.money >= BIGPUMP_PRICE;
+    html += `<div class="item">
+      <div class="info"><div class="name">🚰 Большой насос со шлангом</div><div class="desc">Бак у бассейна + шланг с физикой: набирает 1% воды бассейна за раз, продажа $100. Шланг можно положить (смени инструмент) и взять снова (E у насадки).</div></div>
+      <button data-buy="bigpump" ${bpOwned || !canBp ? 'disabled' : ''} class="${bpOwned ? 'owned' : ''}">${bpOwned ? 'Куплено ✓' : '$' + BIGPUMP_PRICE}</button>
+    </div>`;
+  }
   if (state.pumpLevel < PUMP_MAX_LEVEL) {
     const cost = PUMP_UPGRADE_BASE * state.pumpLevel;
     const canUp = state.money >= cost;
     html += `<div class="item">
-      <div class="info"><div class="name">Прокачка насосов (ур. ${state.pumpLevel} → ${state.pumpLevel + 1})</div><div class="desc">Все насосы качают быстрее и забирают больше воды за раз. Каждая следующая прокачка дороже.</div></div>
+      <div class="info"><div class="name">Прокачка насосов (ур. ${state.pumpLevel} → ${state.pumpLevel + 1})</div><div class="desc">Насосы собирают больше воды и приносят больше денег (до $${PUMP_INCOMES[PUMP_MAX_LEVEL - 1]} за цикл). Каждая следующая прокачка дороже.</div></div>
       <button data-buy="pumpUpgrade" ${canUp ? '' : 'disabled'}>$${cost}</button>
     </div>`;
   } else {
-    html += `<div class="item"><div class="info"><div class="name">Прокачка насосов</div><div class="desc">Максимальный уровень (5) достигнут!</div></div></div>`;
+    html += `<div class="item"><div class="info"><div class="name">Прокачка насосов</div><div class="desc">Максимальный уровень (${PUMP_MAX_LEVEL}) достигнут!</div></div></div>`;
   }
   ui.shopItems.innerHTML = html;
   ui.shopItems.querySelectorAll('button[data-buy]').forEach(b => {
@@ -963,6 +1080,14 @@ function buy(key) {
     scene.add(g);
     pumps.push({ group: g, timer: 0 });
     toast('Насос установлен! Труба качает воду и приносит деньги.');
+    buySound();
+  } else if (key === 'bigpump') {
+    if (hoseState || state.money < BIGPUMP_PRICE) { errorSound(); return; }
+    state.money -= BIGPUMP_PRICE;
+    state.owned.hose = true;
+    installBigPump();
+    toast('Большой насос установлен! Шланг в руках: набирай у воды (ЛКМ) — 1% бассейна за раз, продажа $100.');
+    npcSay(shopVendor, VENDOR_LINES, 0.7);
     buySound();
   } else if (key === 'pumpUpgrade') {
     const cost = PUMP_UPGRADE_BASE * state.pumpLevel;
@@ -997,6 +1122,12 @@ function closeShop() {
 }
 
 function handleInteract() {
+  if (hoseState && !hoseState.held && player.pos.distanceTo(hoseState.nozzle.position) < 2.6) {
+    hoseState.held = true;
+    equip('hose');
+    toast('Взял шланг! Набирай воду у бассейна (ЛКМ).');
+    return;
+  }
   if (player.pos.distanceTo(waterBuyer.group.position) < 3.4) { sellWater(); return; }
   if (player.pos.distanceTo(stand.position) < 3.8) { state.shopOpen ? closeShop() : openShop(); }
 }
@@ -1014,8 +1145,9 @@ addEventListener('keydown', e => {
   }
   if (e.code === 'KeyB') {
     if (state.shopOpen) closeShop();
-    else if (locked) openShop();
+    else if (locked && !(isInsidePool(player.pos.x, player.pos.z) && state.volume > 0)) openShop();
   }
+  if (e.code === 'Digit5') equip('hose');
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -1085,7 +1217,7 @@ function climbOut() {
 function updatePlayer(dt, t) {
   const inWater = isInsidePool(player.pos.x, player.pos.z) && state.volume > 0;
   const waterY = currentWaterY();
-  const speed = inWater ? (keys['ControlLeft'] ? 1.5 : 2.4) : (keys['ShiftLeft'] ? 8 : 4.6);
+  const speed = inWater ? ((keys['ControlLeft'] || keys['KeyB']) ? 1.5 : 2.4) : (keys['ShiftLeft'] ? 8 : 4.6);
   const f = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const r = new THREE.Vector3(-f.z, 0, f.x);
   const move = new THREE.Vector3();
@@ -1114,7 +1246,7 @@ function updatePlayer(dt, t) {
   }
 
   if (inWater) {
-    const diving = keys['ControlLeft'];
+    const diving = keys['ControlLeft'] || keys['KeyB'];
     const targetY = diving ? waterY - 0.7 : waterY + 0.42 + Math.sin(t * 2.2) * 0.06;
     player.vy = 0;
     player.pos.y += (targetY - player.pos.y) * Math.min(1, dt * 6);
@@ -1158,13 +1290,13 @@ function updatePlayer(dt, t) {
 function updatePumps(dt) {
   if (state.volume <= 0) return;
   const period = PUMP_PERIODS[state.pumpLevel - 1];
-  const removal = 1.5 * state.pumpLevel * volScale();
+  const removal = 1.8 * state.pumpLevel * volScale();
   for (const p of pumps) {
     p.timer += dt;
     p.group.userData.wheel.rotation.z += dt * 4;
     if (p.timer >= period) {
       p.timer -= period;
-      state.money += PUMP_INCOME;
+      state.money += PUMP_INCOMES[state.pumpLevel - 1];
       state.volume = Math.max(0, state.volume - removal);
       const outlet = p.group.localToWorld(p.group.userData.outletLocal.clone());
       spawnSplash(outlet, 8, 1.6);
@@ -1208,21 +1340,23 @@ function updateHUD() {
   ui.waterPct.textContent = (pct >= 1 ? Math.ceil(pct) : pct.toFixed(2)) + '%';
   ui.waterBar.style.width = Math.max(0.5, pct) + '%';
   const period = PUMP_PERIODS[state.pumpLevel - 1].toFixed(1);
-  ui.pumpsLine.textContent = `Насосы: ${pumps.length} (ур. ${state.pumpLevel}) — $${PUMP_INCOME} / ${period} сек`;
+  ui.pumpsLine.textContent = `Насосы: ${pumps.length} (ур. ${state.pumpLevel}) — $${PUMP_INCOMES[state.pumpLevel - 1]} / ${period} сек`;
 }
 
 function updatePrompt() {
   let text = '';
   if (!state.shopOpen && locked && !state.inMenu) {
     const inWater = isInsidePool(player.pos.x, player.pos.z) && state.volume > 0;
-    if (player.pos.distanceTo(waterBuyer.group.position) < 3.4) {
+    if (hoseState && !hoseState.held && player.pos.distanceTo(hoseState.nozzle.position) < 2.6) {
+      text = 'E — взять шланг';
+    } else if (player.pos.distanceTo(waterBuyer.group.position) < 3.4) {
       text = state.carried > 0 ? `E — продать воду скупщику (+$${state.carried})` : 'Скупщик: принеси мне воду!';
     } else if (player.pos.distanceTo(stand.position) < 3.8) {
       text = 'E — открыть магазин';
     } else if (inWater && edgeDistance(player.pos.x, player.pos.z) < 1.4) {
       text = 'Пробел — выбраться из бассейна';
     } else if (inWater) {
-      text = 'Ctrl — нырнуть';
+      text = 'Ctrl / B — нырнуть';
     }
   }
   ui.prompt.style.display = text ? 'block' : 'none';
@@ -1247,6 +1381,14 @@ function startGame(modeKey) {
   splashes.length = 0;
   for (const r of rings) { scene.remove(r.m); r.m.material.dispose(); }
   rings.length = 0;
+  if (hoseState) {
+    scene.remove(hoseState.group);
+    scene.remove(hoseState.hose);
+    scene.remove(hoseState.nozzle);
+    hoseState.hose.geometry.dispose();
+    hoseState = null;
+  }
+  state.carriedTool = null;
   player.pos.set(0, 1.7, W.hz + 8);
   player.yaw = 0;
   player.pitch = 0;
@@ -1635,6 +1777,8 @@ function animate() {
     dropTimer -= dt;
     if (dropTimer <= 0) {
       spawnSplash(scoopPoint, 2, 1.1);
+      ringTimer -= dt;
+      if (ringTimer <= 0) { spawnRing(scoopPoint.x, scoopPoint.z); ringTimer = 0.5; }
       dropTimer = 0.13;
     }
     ui.progress.style.display = 'block';
@@ -1689,6 +1833,7 @@ function animate() {
   }
   if (!state.inMenu && !state.won && state.volume <= 0 && state.carried === 0 && water && !water.visible) winGame();
 
+  updateHose(dt);
   updatePumps(dt);
   updateParticles(dt);
   updateHUD();
